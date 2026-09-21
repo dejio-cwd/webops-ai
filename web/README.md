@@ -18,24 +18,42 @@ Vercel's free tier — no Docker, no local Chrome, nothing to install on your ma
 - **Health scoring** by category with an overall grade.
 - **Real Core Web Vitals** via Google PageSpeed Insights (Lighthouse in Google's cloud) —
   lab metrics + real-user CrUX field data. No local browser needed.
-- **Evidence-grounded AI copilot** (bring your own key) — Explain, Fix playbook, and
-  executive summary. The model is instructed to use only captured evidence.
+- **No fixed page cap** — crawl limits (max pages, depth, concurrency) are user-configurable
+  in Settings → Crawl defaults, up to a 2000-page safety ceiling. A crawl always stops
+  cleanly at the serverless deadline and reports `truncated: true` instead of failing.
+- **AI Studio with full BYOK** — connect any provider (OpenRouter, OpenAI, Anthropic,
+  Google, Groq), a custom OpenAI-compatible endpoint (Azure, Bedrock gateway, vLLM,
+  LiteLLM...), or a local Ollama/LM Studio server. Live model discovery, one-click
+  connection testing, and per-task routing (explain/fix/summary/chat), all stored only
+  in your browser — never on the server.
+- **Mule** — a free-form chat assistant wired to whichever connection you configure,
+  optionally grounded in the current audit's evidence.
+- **Evidence-grounded AI copilot** — Explain, Fix playbook, and executive summary. The
+  model is instructed to use only captured evidence.
 
 ## Architecture
 
 ```
 Next.js (App Router) on Vercel
-├── app/                     dashboard UI (client)
+├── app/                     dashboard UI (client) + Settings modal (BYOK, crawl defaults)
 └── app/api/
     ├── audit/route.ts       POST → full crawl + rules + opportunities (maxDuration 60s)
     ├── performance/route.ts POST → PageSpeed / Core Web Vitals
-    ├── models/route.ts      GET  → provider catalogue + live free models
-    └── ai/route.ts          POST → evidence-grounded explanation / fix
-└── lib/                     the engine (crawler, extractor, rules, scoring, providers)
+    ├── models/route.ts      GET  → provider catalogue + live free models (env-configured)
+    └── ai/
+        ├── route.ts         POST → evidence-grounded explanation / fix / summary
+        ├── chat/route.ts    POST → Mule: open-ended chat, any configured connection
+        ├── models/route.ts  POST → live model listing for a specific BYOK credential
+        └── test/route.ts    POST → validate a BYOK credential actually works
+└── lib/
+    ├── crawler.ts, extract.ts, rules.ts, opportunities.ts, score.ts   the audit engine
+    ├── ai.ts                server-side provider abstraction (BYOK + env fallback)
+    └── connections.ts       client-side BYOK connection store (localStorage)
 ```
 
 The per-request crawl is bounded and deadline-aware so it always finishes inside the
-serverless time limit. Crawling thousands of URLs is the roadmap's queue + worker phase.
+serverless time limit, regardless of how high `maxPages` is set. Crawling thousands of
+URLs reliably in one pass is the roadmap's queue + worker phase.
 
 ## Run locally
 

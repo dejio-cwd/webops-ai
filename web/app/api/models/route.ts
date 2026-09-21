@@ -1,18 +1,12 @@
-// GET /api/models -> AI provider catalogue, which providers are configured
-// server-side, and a live-discovered list of free OpenRouter models.
+// GET /api/models -> full provider catalogue, which providers are configured
+// server-side via env vars, and a live-discovered list of free OpenRouter models.
+// This powers the "Providers" grid in AI Studio. For live, per-credential model
+// listing (including BYOK and custom endpoints) see POST /api/ai/models.
 
-import { availableProviders, discoverFreeModels } from "@/lib/ai";
+import { providerCatalog, availableProviders, discoverFreeModels } from "@/lib/ai";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const catalog = [
-  { provider: "openrouter", label: "OpenRouter", tier: "free+byok", note: "Access hundreds of models incl. free ones" },
-  { provider: "openai", label: "OpenAI", tier: "byok", note: "GPT-4o / GPT-4o-mini" },
-  { provider: "anthropic", label: "Anthropic", tier: "byok", note: "Claude family" },
-  { provider: "google", label: "Google", tier: "byok", note: "Gemini family" },
-  { provider: "groq", label: "Groq", tier: "byok", note: "Ultra low-latency inference" },
-];
 
 export async function GET() {
   const configured = availableProviders();
@@ -21,7 +15,7 @@ export async function GET() {
     {
       configuredProviders: configured,
       hasAnyProvider: configured.length > 0,
-      catalog,
+      catalog: providerCatalog(),
       freeModels,
       freeModelCount: freeModels.length,
       refreshedAt: new Date().toISOString(),

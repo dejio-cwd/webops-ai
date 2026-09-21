@@ -3,11 +3,12 @@
 //   mode: "explain" | "fix" | "summary",
 //   opportunity?: Opportunity,        // for explain / fix
 //   context?: { url, health, topFindings, crawl }, // for summary
-//   provider?: string, model?: string
+//   provider?: string, model?: string,
+//   credential?: { provider, apiKey?, baseUrl?, model? }  // BYOK, from AI Studio settings
 // }
 // The model is strictly instructed to use only the supplied evidence.
 
-import { generateText } from "@/lib/ai";
+import { generateText, type Credential } from "@/lib/ai";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -64,11 +65,20 @@ Explain this issue clearly: what it means, why these specific pages triggered it
   }
 
   try {
+    const credential: Credential | undefined = body.credential
+      ? {
+          provider: body.credential.provider,
+          apiKey: body.credential.apiKey,
+          baseUrl: body.credential.baseUrl,
+          model: body.credential.model,
+        }
+      : undefined;
     const result = await generateText({
       system: SYSTEM,
       user,
       provider: body.provider,
       model: body.model,
+      credential,
       maxTokens: mode === "summary" ? 500 : 900,
     });
     return Response.json(result, { headers: { "Cache-Control": "no-store" } });

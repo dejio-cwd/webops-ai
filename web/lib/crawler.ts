@@ -30,17 +30,23 @@ export interface CrawlOutput {
   robots: RobotsInfo;
 }
 
-const HARD_MAX_PAGES = 50; // safety ceiling for a single serverless invocation
+// Absolute safety ceiling — protects against a single invocation running away.
+// The real, practical limit is the serverless function deadline (deadlineMs):
+// a crawl always stops early and reports `truncated: true` rather than time out.
+// Configurable per-request up to this ceiling via the "Crawl settings" panel.
+export const HARD_MAX_PAGES = 2000;
+export const HARD_MAX_CONCURRENCY = 16;
+export const HARD_MAX_DEPTH = 12;
 
 export async function crawlSite(
   requestedUrl: string,
   options: CrawlOptions = {},
 ): Promise<CrawlOutput> {
   const startedAt = Date.now();
-  const maxPages = Math.min(options.maxPages ?? 20, HARD_MAX_PAGES);
-  const maxDepth = options.maxDepth ?? 3;
+  const maxPages = Math.max(1, Math.min(options.maxPages ?? 20, HARD_MAX_PAGES));
+  const maxDepth = Math.max(0, Math.min(options.maxDepth ?? 3, HARD_MAX_DEPTH));
   const respectRobots = options.respectRobots ?? true;
-  const concurrency = Math.min(options.concurrency ?? 5, 8);
+  const concurrency = Math.max(1, Math.min(options.concurrency ?? 6, HARD_MAX_CONCURRENCY));
   const deadline = startedAt + (options.deadlineMs ?? 45000);
 
   const entry = await validateTarget(requestedUrl); // throws if unsafe/invalid

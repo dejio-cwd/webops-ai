@@ -1,9 +1,24 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CATEGORY_LABELS } from "@/lib/types";
 import type { AuditResult, Opportunity, Finding, PageEvidence, Severity } from "@/lib/types";
 import type { PageSpeedResult } from "@/lib/pagespeed";
+import {
+  loadSettings,
+  saveSettings,
+  upsertConnection,
+  removeConnection as removeConnectionFromSettings,
+  connectionForTask,
+  toCredential,
+  newId,
+  CRAWL_LIMITS,
+  PROVIDER_META,
+  type AiSettings,
+  type AiConnection,
+  type AiTask,
+  type ProviderId,
+} from "@/lib/connections";
 
 const MODULES = [
   "Overview",
@@ -18,6 +33,7 @@ const MODULES = [
 type Module = (typeof MODULES)[number];
 
 const SEV_ORDER: Severity[] = ["critical", "high", "medium", "low", "info"];
+const PAGE_PRESETS = [10, 30, 100, 300, 1000];
 
 function sevClass(s: string) {
   return `badge sev-${s}`;
@@ -28,18 +44,42 @@ function scoreColor(n: number) {
   if (n >= 50) return "var(--warn)";
   return "var(--bad)";
 }
-function gradeBg(n: number) {
-  const c = scoreColor(n);
-  return { color: c, background: `${c}22` };
-}
+
+type Credential = ReturnType<typeof toCredential>;
 
 export default function Home() {
   const [active, setActive] = useState<Module>("Overview");
   const [url, setUrl] = useState("");
-  const [maxPages, setMaxPages] = useState(20);
+  const [maxPages, setMaxPages] = useState(30);
   const [running, setRunning] = useState(false);
   const [audit, setAudit] = useState<AuditResult | null>(null);
   const [error, setError] = useState("");
+
+  const [settings, setSettings] = useState<AiSettings>(loadSettings());
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<"connections" | "crawl">("connections");
+
+  // Hydrate from localStorage after mount (SSR-safe: loadSettings() returns
+  // identical defaults on server and first client render, so no mismatch).
+  useEffect(() => {
+    const loaded = loadSettings();
+    // one-time read of a browser-only store (localStorage); not derivable during render
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSettings(loaded);
+    setMaxPages(loaded.crawlDefaults.maxPages);
+  }, []);
+
+  const persistSettings = useCallback((next: AiSettings) => {
+    setSettings(next);
+    saveSettings(next);
+  }, []);
+
+  const openSettings = useCallback((tab: "connections" | "crawl") => {
+    setSettingsTab(tab);
+    setSettingsOpen(true);
+  }, []);
+
+  const getCredential = useCallback((task: AiTask): Credential => toCredential(connectionForTask(settings, task)), [settings]);
 
   const runAudit = useCallback(async () => {
     if (!url.trim()) {
@@ -52,7 +92,14 @@ export default function Home() {
       const res = await fetch("/api/audit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, maxPages }),
+        body: JSON.stringify({
+          url,
+          maxPages,
+          maxDepth: settings.crawlDefaults.maxDepth,
+          concurrency: settings.crawlDefaults.concurrency,
+          respectRobots: settings.crawlDefaults.respectRobots,
+          checkExternalLinks: settings.crawlDefaults.checkExternalLinks,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Audit failed.");
@@ -63,7 +110,7 @@ export default function Home() {
     } finally {
       setRunning(false);
     }
-  }, [url, maxPages]);
+  }, [url, maxPages, settings.crawlDefaults]);
 
   const findingCount = audit?.findings.length ?? 0;
   const oppCount = audit?.opportunities.length ?? 0;
@@ -87,21 +134,23 @@ export default function Home() {
         <div className="nav-label">Platform</div>
         <nav className="nav">
           {MODULES.map((m) => (
-            <button
-              key={m}
-              className={active === m ? "active" : ""}
-              onClick={() => setActive(m)}
-            >
+            <button key={m} className={active === m ? "active" : ""} onClick={() => setActive(m)}>
               <span>{m}</span>
-              {counts[m] !== undefined && (
-                <span className={`pill ${counts[m] ? "" : "zero"}`}>{counts[m]}</span>
-              )}
+              {counts[m] !== undefined && <span className={`pill ${counts[m] ? "" : "zero"}`}>{counts[m]}</span>}
             </button>
           ))}
         </nav>
         <div className="nav-label" style={{ marginTop: 20 }}>Model</div>
         <div style={{ padding: "0 6px" }}>
           <div className="chip">Find → Explain → Prioritize → Fix → Verify</div>
+        </div>
+        <div className="sidebar-footer">
+          <button className="sidebar-btn" onClick={() => openSettings("connections")}>
+            <span>⚙</span><span>AI connections &amp; BYOK</span>
+          </button>
+          <button className="sidebar-btn" onClick={() => openSettings("crawl")}>
+            <span>⛭</span><span>Crawl settings</span>
+          </button>
         </div>
       </aside>
 
@@ -136,20 +185,34 @@ export default function Home() {
             />
           </div>
           <div className="field">
-            <label>Max pages · {maxPages}</label>
-            <input
-              type="range"
-              min={1}
-              max={50}
-              value={maxPages}
-              onChange={(e) => setMaxPages(Number(e.target.value))}
-            />
+            <label>Max pages</label>
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <input
+                type="number"
+                min={1}
+                max={CRAWL_LIMITS.maxPages}
+                value={maxPages}
+                onChange={(e) => setMaxPages(Math.max(1, Math.min(CRAWL_LIMITS.maxPages, Number(e.target.value) || 1)))}
+                style={{ width: 84 }}
+              />
+              <div style={{ display: "flex", gap: 4 }}>
+                {PAGE_PRESETS.map((p) => (
+                  <button key={p} className="chip" style={{ cursor: "pointer", border: 0 }} onClick={() => setMaxPages(p)}>
+                    {p}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
           <div className="field">
             <label>&nbsp;</label>
             <button className="btn" onClick={runAudit} disabled={running}>
               {running ? <><span className="spinner" />Crawling…</> : "Run audit"}
             </button>
+          </div>
+          <div className="field">
+            <label>&nbsp;</label>
+            <button className="icon-btn" title="Advanced crawl settings" onClick={() => openSettings("crawl")}>⚙</button>
           </div>
         </div>
 
@@ -158,19 +221,30 @@ export default function Home() {
         {!audit && !running && <Welcome />}
         {running && !audit && (
           <div className="empty">
-            <span className="spinner" /> Crawling the site, running the rules engine, and scoring…
+            <span className="spinner" /> Crawling up to {maxPages} page{maxPages === 1 ? "" : "s"}, running the rules engine, and scoring…
           </div>
         )}
 
-        {audit && active === "Overview" && <Overview audit={audit} onJump={setActive} />}
-        {audit && active === "Opportunities" && <Opportunities audit={audit} />}
+        {audit && active === "Overview" && <Overview audit={audit} onJump={setActive} credential={getCredential("summary")} />}
+        {audit && active === "Opportunities" && <Opportunities audit={audit} explainCred={getCredential("explain")} fixCred={getCredential("fix")} />}
         {audit && active === "Findings" && <Findings audit={audit} />}
         {audit && active === "Crawl" && <Crawl audit={audit} />}
         {audit && active === "Performance" && <Performance origin={audit.crawl.requestedUrl} />}
         {audit && active === "Links & Images" && <LinksImages audit={audit} />}
-        {active === "AI Studio" && <AiStudio />}
+        {active === "AI Studio" && (
+          <AiStudio settings={settings} onOpenSettings={openSettings} audit={audit} />
+        )}
         {active === "Roadmap" && <Roadmap />}
       </main>
+
+      {settingsOpen && (
+        <SettingsModal
+          settings={settings}
+          initialTab={settingsTab}
+          onClose={() => setSettingsOpen(false)}
+          onChange={persistSettings}
+        />
+      )}
     </div>
   );
 }
@@ -185,14 +259,15 @@ function Welcome() {
         WebOps AI crawls the site, captures verifiable evidence for every page, runs a deterministic
         rules engine across SEO, indexability, content, links, images, structured data, accessibility
         and security, then rolls everything up into prioritized opportunities. Add a PageSpeed key for
-        real Core Web Vitals and an AI key for evidence-grounded fix playbooks.
+        real Core Web Vitals, and configure an AI connection (BYOK, any provider) for evidence-grounded
+        fix playbooks and the Mule assistant.
       </p>
       <div className="grid cols-4" style={{ marginTop: 18 }}>
         {[
-          ["Real crawler", "BFS, robots.txt, sitemap, depth limits"],
+          ["Real crawler", "BFS, robots.txt, sitemap, configurable depth & page limits"],
           ["40+ rules", "Deterministic, reproducible, explained"],
           ["Core Web Vitals", "Lighthouse via Google, no local Chrome"],
-          ["AI copilot", "Grounded in the evidence, never invented"],
+          ["AI copilot + Mule", "Any provider, BYOK, grounded in evidence"],
         ].map(([t, s]) => (
           <div className="metric" key={t}>
             <div className="metric-label">{t}</div>
@@ -229,10 +304,43 @@ function Ring({ score, grade }: { score: number; grade: string }) {
   );
 }
 
-function Overview({ audit, onJump }: { audit: AuditResult; onJump: (m: Module) => void }) {
+function Overview({ audit, onJump, credential }: { audit: AuditResult; onJump: (m: Module) => void; credential: Credential }) {
   const { health, crawl, opportunities } = audit;
   const cats = Object.entries(health.categories) as [string, number][];
   const sevCounts = audit.findingCountsBySeverity;
+  const [summary, setSummary] = useState("");
+  const [loadingSummary, setLoadingSummary] = useState(false);
+  const [summaryErr, setSummaryErr] = useState("");
+
+  const genSummary = async () => {
+    setLoadingSummary(true);
+    setSummaryErr("");
+    setSummary("");
+    try {
+      const res = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: "summary",
+          credential,
+          context: {
+            url: crawl.origin,
+            health,
+            crawl,
+            topFindings: audit.findings.slice(0, 15).map((f) => ({ title: f.title, severity: f.severity, url: f.url })),
+          },
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "AI request failed.");
+      setSummary(data.text);
+    } catch (e) {
+      setSummaryErr(e instanceof Error ? e.message : "AI request failed.");
+    } finally {
+      setLoadingSummary(false);
+    }
+  };
+
   return (
     <>
       <div className="grid cols-2">
@@ -279,14 +387,29 @@ function Overview({ audit, onJump }: { audit: AuditResult; onJump: (m: Module) =
 
       <div className="section-title">Crawl summary</div>
       <div className="grid cols-4">
-        <Metric label="Pages crawled" value={String(crawl.pagesCrawled)} note={`${crawl.pagesRequested} requested`} />
-        <Metric label="Duration" value={`${(crawl.durationMs / 1000).toFixed(1)}s`} note={`depth ≤ ${crawl.maxDepth}`} />
+        <Metric label="Pages crawled" value={String(crawl.pagesCrawled)} note={`${crawl.pagesRequested} requested${crawl.truncated ? " · truncated" : ""}`} />
+        <Metric label="Duration" value={`${(crawl.durationMs / 1000).toFixed(1)}s`} note={`depth ≤ ${crawl.maxDepth} · cap ${crawl.maxPages}`} />
         <Metric label="Broken links" value={String(crawl.brokenLinks.length)} note="internal + external" />
         <Metric
           label="robots / sitemap"
           value={`${crawl.robotsFound ? "✓" : "✗"} / ${crawl.sitemapFound ? "✓" : "✗"}`}
           note={crawl.fromSitemap ? `${crawl.fromSitemap} URLs from sitemap` : "no sitemap URLs"}
         />
+      </div>
+
+      <div className="section-title">AI executive summary</div>
+      <div className="card">
+        {!summary && !loadingSummary && (
+          <button className="btn sm" onClick={genSummary}>Generate AI summary</button>
+        )}
+        {loadingSummary && <div className="muted"><span className="spinner" />Writing summary…</div>}
+        {summaryErr && <div className="notice bad">{summaryErr}</div>}
+        {summary && (
+          <>
+            <div className="ai-out">{summary}</div>
+            <button className="btn ghost sm" style={{ marginTop: 10 }} onClick={genSummary}>Regenerate</button>
+          </>
+        )}
       </div>
 
       <div className="section-title">Top opportunities</div>
@@ -314,23 +437,24 @@ function Metric({ label, value, note }: { label: string; value: string; note: st
 
 /* ------- Opportunities + AI ------- */
 
-function Opportunities({ audit }: { audit: AuditResult }) {
+function Opportunities({ audit, explainCred, fixCred }: { audit: AuditResult; explainCred: Credential; fixCred: Credential }) {
   if (!audit.opportunities.length)
     return <div className="empty">No opportunities — the rules engine found nothing to fix. 🎉</div>;
   return (
     <>
       <p className="muted" style={{ marginBottom: 14 }}>
         {audit.opportunities.length} prioritized actions. Score = severity × scope × ease. Use the AI
-        buttons to generate an evidence-grounded explanation or a step-by-step fix playbook.
+        buttons to generate an evidence-grounded explanation or a step-by-step fix playbook, powered by
+        whichever connection you set as default (or routed) in AI Studio.
       </p>
       {audit.opportunities.map((o) => (
-        <OppCard key={o.id} opp={o} />
+        <OppCard key={o.id} opp={o} explainCred={explainCred} fixCred={fixCred} />
       ))}
     </>
   );
 }
 
-function OppCard({ opp, compact }: { opp: Opportunity; compact?: boolean }) {
+function OppCard({ opp, compact, explainCred, fixCred }: { opp: Opportunity; compact?: boolean; explainCred?: Credential; fixCred?: Credential }) {
   const [out, setOut] = useState("");
   const [loading, setLoading] = useState<"" | "explain" | "fix">("");
   const [err, setErr] = useState("");
@@ -343,7 +467,7 @@ function OppCard({ opp, compact }: { opp: Opportunity; compact?: boolean }) {
       const res = await fetch("/api/ai", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode, opportunity: opp }),
+        body: JSON.stringify({ mode, opportunity: opp, credential: mode === "fix" ? fixCred : explainCred }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "AI request failed.");
@@ -680,12 +804,21 @@ function LinksImages({ audit }: { audit: AuditResult }) {
 interface ModelsResponse {
   configuredProviders: string[];
   hasAnyProvider: boolean;
-  catalog: { provider: string; label: string; tier: string; note: string }[];
+  catalog: { id: ProviderId; label: string; needsKey: boolean; hasEnvKey: boolean; defaultModel: string; defaultBaseUrl: string }[];
   freeModels: { id: string; label: string; contextLength?: number }[];
   freeModelCount: number;
 }
 
-function AiStudio() {
+function AiStudio({
+  settings,
+  onOpenSettings,
+  audit,
+}: {
+  settings: AiSettings;
+  onOpenSettings: (tab: "connections" | "crawl") => void;
+  audit: AuditResult | null;
+}) {
+  const [tab, setTab] = useState<"overview" | "explorer" | "mule">(settings.connections.length ? "mule" : "overview");
   const [data, setData] = useState<ModelsResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -697,55 +830,538 @@ function AiStudio() {
       .finally(() => setLoading(false));
   }, []);
 
-  if (loading) return <div className="empty"><span className="spinner" /> Loading model catalogue…</div>;
-
   return (
     <>
       <div className="card" style={{ marginBottom: 16 }}>
         <h3>AI Studio</h3>
-        <div className="sub">Bring your own key. Keys live only in server-side environment variables — never in the browser, never logged.</div>
-        {data?.hasAnyProvider ? (
-          <div className="notice ok">
-            Configured providers: <b>{data.configuredProviders.join(", ")}</b>. The Explain / Fix buttons on each opportunity are live.
-          </div>
+        <div className="sub">
+          Bring your own key for any provider — OpenRouter, OpenAI, Anthropic, Google, Groq, a custom
+          OpenAI-compatible endpoint, or a local Ollama/LM Studio server. Keys you add here live only in
+          this browser and are sent directly with each request — never stored on our servers.
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button className="btn sm" onClick={() => onOpenSettings("connections")}>+ Add / manage connections</button>
+          <span className="chip">{settings.connections.length} connection{settings.connections.length === 1 ? "" : "s"} saved</span>
+          {data && <span className="chip">{data.configuredProviders.length} provider{data.configuredProviders.length === 1 ? "" : "s"} configured via server env</span>}
+        </div>
+      </div>
+
+      <div className="tabbar">
+        <button className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}>Providers</button>
+        <button className={tab === "explorer" ? "active" : ""} onClick={() => setTab("explorer")}>Model explorer</button>
+        <button className={tab === "mule" ? "active" : ""} onClick={() => setTab("mule")}>Mule chat</button>
+      </div>
+
+      {tab === "overview" && (
+        loading ? (
+          <div className="empty"><span className="spinner" /> Loading provider catalogue…</div>
         ) : (
-          <div className="notice warn">
-            No AI provider configured yet. Add one of <code>OPENROUTER_API_KEY</code>, <code>OPENAI_API_KEY</code>,
-            <code> ANTHROPIC_API_KEY</code>, <code>GROQ_API_KEY</code>, or <code>GOOGLE_API_KEY</code> in your Vercel
-            environment variables, then redeploy.
-          </div>
-        )}
-      </div>
-      <div className="section-title">Providers</div>
-      <div className="grid cols-3">
-        {data?.catalog.map((p) => (
-          <div className="metric" key={p.provider}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div className="metric-label">{p.label}</div>
-              {data.configuredProviders.includes(p.provider) ? (
-                <span className="badge sev-low" style={{ background: "rgba(52,211,153,0.15)", color: "var(--good)" }}>active</span>
-              ) : (
-                <span className="chip">not set</span>
-              )}
+          <>
+            <div className="grid cols-3">
+              {data?.catalog.map((p) => {
+                const byok = settings.connections.filter((c) => c.provider === p.id);
+                return (
+                  <div className="metric" key={p.id}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div className="metric-label">{p.label}</div>
+                      {p.hasEnvKey ? (
+                        <span className="badge sev-low" style={{ background: "rgba(52,211,153,0.15)", color: "var(--good)" }}>env key active</span>
+                      ) : byok.length ? (
+                        <span className="badge sev-low" style={{ background: "rgba(91,140,255,0.15)", color: "var(--brand-2)" }}>{byok.length} BYOK</span>
+                      ) : (
+                        <span className="chip">not configured</span>
+                      )}
+                    </div>
+                    <div className="metric-note" style={{ marginTop: 8 }}>
+                      {PROVIDER_META[p.id]?.hint} Default: <code>{p.defaultModel || "—"}</code>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-            <div className="metric-note" style={{ marginTop: 8 }}>{p.note}</div>
-          </div>
-        ))}
+            <div className="section-title">Free models discovered on OpenRouter · {data?.freeModelCount ?? 0}</div>
+            {data && data.freeModels.length > 0 ? (
+              <div className="card" style={{ maxHeight: 320, overflowY: "auto" }}>
+                {data.freeModels.slice(0, 80).map((m) => (
+                  <div className="kv" key={m.id}>
+                    <span style={{ fontFamily: "var(--mono)", fontSize: 11.5 }}>{m.id}</span>
+                    <span className="muted">{m.contextLength ? `${(m.contextLength / 1000).toFixed(0)}k ctx` : ""}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="notice">No free models discovered yet — add an OpenRouter connection (a key is optional for listing) in Settings.</div>
+            )}
+          </>
+        )
+      )}
+
+      {tab === "explorer" && <ModelExplorer settings={settings} />}
+      {tab === "mule" && <Mule settings={settings} audit={audit} />}
+    </>
+  );
+}
+
+function ModelExplorer({ settings }: { settings: AiSettings }) {
+  const [connId, setConnId] = useState<string>(settings.connections[0]?.id || "");
+  const [models, setModels] = useState<{ id: string; label: string; contextLength?: number; free?: boolean }[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string; latencyMs: number } | null>(null);
+  const [filter, setFilter] = useState("");
+
+  const conn = settings.connections.find((c) => c.id === connId);
+
+  const discover = async () => {
+    if (!conn) return;
+    setLoading(true);
+    setErr("");
+    setModels([]);
+    try {
+      const res = await fetch("/api/ai/models", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(toCredential(conn)),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Could not list models.");
+      setModels(data.models || []);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Could not list models.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const test = async () => {
+    if (!conn) return;
+    setTestResult(null);
+    try {
+      const res = await fetch("/api/ai/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(toCredential(conn)),
+      });
+      const data = await res.json();
+      setTestResult(data);
+    } catch (e) {
+      setTestResult({ ok: false, message: e instanceof Error ? e.message : "Test failed.", latencyMs: 0 });
+    }
+  };
+
+  const shown = models.filter((m) => !filter || m.id.toLowerCase().includes(filter.toLowerCase()));
+
+  if (!settings.connections.length) {
+    return <div className="notice">Add a connection first (sidebar → AI connections &amp; BYOK) to browse and test its live model list.</div>;
+  }
+
+  return (
+    <>
+      <div className="runbar">
+        <div className="field" style={{ flex: 1 }}>
+          <label>Connection</label>
+          <select value={connId} onChange={(e) => { setConnId(e.target.value); setModels([]); setTestResult(null); }}>
+            {settings.connections.map((c) => (
+              <option key={c.id} value={c.id}>{c.label} ({PROVIDER_META[c.provider]?.label})</option>
+            ))}
+          </select>
+        </div>
+        <div className="field"><label>&nbsp;</label><button className="btn sm" onClick={discover} disabled={loading}>{loading ? "Discovering…" : "Discover models"}</button></div>
+        <div className="field"><label>&nbsp;</label><button className="btn ghost sm" onClick={test}>Test connection</button></div>
+        <div className="field" style={{ flex: 1 }}>
+          <label>Filter</label>
+          <input type="text" placeholder="filter model ids…" value={filter} onChange={(e) => setFilter(e.target.value)} />
+        </div>
       </div>
-      <div className="section-title">Free models discovered on OpenRouter · {data?.freeModelCount ?? 0}</div>
-      {data && data.freeModels.length > 0 ? (
-        <div className="card" style={{ maxHeight: 320, overflowY: "auto" }}>
-          {data.freeModels.slice(0, 60).map((m) => (
+      {testResult && (
+        <div className={`notice ${testResult.ok ? "ok" : "bad"}`} style={{ marginBottom: 14 }}>
+          <span className={`dot ${testResult.ok ? "ok" : "bad"}`} />
+          {testResult.message} ({testResult.latencyMs}ms)
+        </div>
+      )}
+      {err && <div className="notice bad" style={{ marginBottom: 14 }}>{err}</div>}
+      {shown.length > 0 ? (
+        <div className="card" style={{ maxHeight: 420, overflowY: "auto" }}>
+          {shown.map((m) => (
             <div className="kv" key={m.id}>
-              <span style={{ fontFamily: "var(--mono)", fontSize: 11.5 }}>{m.id}</span>
+              <span style={{ fontFamily: "var(--mono)", fontSize: 12 }}>
+                {m.id} {m.free && <span className="chip" style={{ marginLeft: 6 }}>free</span>}
+              </span>
               <span className="muted">{m.contextLength ? `${(m.contextLength / 1000).toFixed(0)}k ctx` : ""}</span>
             </div>
           ))}
         </div>
       ) : (
-        <div className="notice">Set <code>OPENROUTER_API_KEY</code> to discover the live list of free models.</div>
+        !loading && <div className="empty">Click &quot;Discover models&quot; to fetch the live list for this connection.</div>
       )}
     </>
+  );
+}
+
+/* ------- Mule (free-form chat, any configured LLM) ------- */
+
+interface ChatTurn { role: "user" | "assistant"; content: string }
+
+function Mule({ settings, audit }: { settings: AiSettings; audit: AuditResult | null }) {
+  const options = useMemo(() => {
+    const list = settings.connections.map((c) => ({ id: c.id, label: `${c.label} (${PROVIDER_META[c.provider]?.label})` }));
+    return list;
+  }, [settings.connections]);
+  const [connId, setConnId] = useState(settings.routing.chat || settings.defaultConnectionId || options[0]?.id || "");
+  const [includeContext, setIncludeContext] = useState(!!audit);
+  const [turns, setTurns] = useState<ChatTurn[]>([]);
+  const [input, setInput] = useState("");
+  const [sending, setSending] = useState(false);
+  const [err, setErr] = useState("");
+  const logRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: "smooth" });
+  }, [turns, sending]);
+
+  const conn = settings.connections.find((c) => c.id === connId);
+
+  const send = async () => {
+    const text = input.trim();
+    if (!text || sending) return;
+    const next = [...turns, { role: "user" as const, content: text }];
+    setTurns(next);
+    setInput("");
+    setSending(true);
+    setErr("");
+    try {
+      const res = await fetch("/api/ai/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: next,
+          credential: toCredential(conn),
+          auditContext:
+            includeContext && audit
+              ? {
+                  url: audit.crawl.origin,
+                  health: audit.health,
+                  crawl: audit.crawl,
+                  topOpportunities: audit.opportunities.slice(0, 10),
+                }
+              : undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Mule failed to respond.");
+      setTurns((t) => [...t, { role: "assistant", content: data.text }]);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Mule failed to respond.");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="runbar">
+        <div className="field" style={{ flex: 1 }}>
+          <label>Connection</label>
+          {options.length ? (
+            <select value={connId} onChange={(e) => setConnId(e.target.value)}>
+              {options.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+            </select>
+          ) : (
+            <span className="muted" style={{ fontSize: 12 }}>Using server-configured provider (no BYOK connection saved)</span>
+          )}
+        </div>
+        <div className="field">
+          <label>&nbsp;</label>
+          <div className="toggle-row" style={{ padding: 0 }}>
+            <input type="checkbox" checked={includeContext} disabled={!audit} onChange={(e) => setIncludeContext(e.target.checked)} />
+            <span className="label" style={{ marginLeft: 6 }}>Ground in current audit</span>
+          </div>
+        </div>
+        <div className="field" style={{ flex: 1, justifyContent: "flex-end" }}>
+          <button className="btn ghost sm" onClick={() => setTurns([])} disabled={!turns.length}>Clear chat</button>
+        </div>
+      </div>
+      <div className="chat-shell">
+        <div className="chat-log" ref={logRef}>
+          {turns.length === 0 && (
+            <div className="chat-empty">
+              This is Mule — your own LLM, wired to whatever provider and model you&apos;ve configured.<br />
+              Ask it about your audit, get it to draft a fix, or just chat.
+            </div>
+          )}
+          {turns.map((t, i) => (
+            <div key={i} className={`chat-msg ${t.role}`}>{t.content}</div>
+          ))}
+          {sending && <div className="chat-msg assistant"><span className="spinner" />thinking…</div>}
+        </div>
+        <div className="chat-input-row">
+          <textarea
+            placeholder="Ask Mule anything…"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                send();
+              }
+            }}
+          />
+          <button className="btn" onClick={send} disabled={sending || !input.trim()}>Send</button>
+        </div>
+      </div>
+      {err && <div className="notice bad" style={{ marginTop: 12 }}>{err}</div>}
+    </>
+  );
+}
+
+/* ------- Settings modal (BYOK connections + crawl defaults) ------- */
+
+function SettingsModal({
+  settings,
+  initialTab,
+  onClose,
+  onChange,
+}: {
+  settings: AiSettings;
+  initialTab: "connections" | "crawl";
+  onClose: () => void;
+  onChange: (next: AiSettings) => void;
+}) {
+  const [tab, setTab] = useState(initialTab);
+  const [editing, setEditing] = useState<AiConnection | null>(null);
+
+  const startNew = () => {
+    setEditing({
+      id: newId(),
+      label: "",
+      provider: "openrouter",
+      apiKey: "",
+      baseUrl: "",
+      model: "",
+      createdAt: new Date().toISOString(),
+    });
+  };
+
+  const saveConn = (c: AiConnection) => {
+    onChange(upsertConnection(settings, c));
+    setEditing(null);
+  };
+
+  const deleteConn = (id: string) => {
+    onChange(removeConnectionFromSettings(settings, id));
+  };
+
+  const setDefault = (id: string) => {
+    onChange({ ...settings, defaultConnectionId: id });
+  };
+
+  const setRouting = (task: AiTask, id: string) => {
+    onChange({ ...settings, routing: { ...settings.routing, [task]: id || undefined } });
+  };
+
+  const setCrawl = (patch: Partial<AiSettings["crawlDefaults"]>) => {
+    onChange({ ...settings, crawlDefaults: { ...settings.crawlDefaults, ...patch } });
+  };
+
+  return (
+    <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal">
+        <div className="modal-header">
+          <h3>Settings</h3>
+          <button className="icon-btn" onClick={onClose}>✕</button>
+        </div>
+        <div className="modal-tabs">
+          <button className={tab === "connections" ? "active" : ""} onClick={() => setTab("connections")}>AI connections (BYOK)</button>
+          <button className={tab === "crawl" ? "active" : ""} onClick={() => setTab("crawl")}>Crawl defaults</button>
+        </div>
+        <div className="modal-body">
+          {tab === "connections" && (
+            editing ? (
+              <ConnectionForm value={editing} onCancel={() => setEditing(null)} onSave={saveConn} />
+            ) : (
+              <>
+                <p className="muted" style={{ fontSize: 12.5, marginBottom: 12 }}>
+                  Keys are stored only in this browser (localStorage) and sent directly with each AI
+                  request — never persisted on our servers, never logged. Add any provider: cloud APIs
+                  with your own key, a custom OpenAI-compatible endpoint, or a local Ollama / LM Studio
+                  server.
+                </p>
+                <button className="btn sm" onClick={startNew} style={{ marginBottom: 14 }}>+ Add connection</button>
+                {settings.connections.length === 0 ? (
+                  <div className="empty">No connections yet. Server env vars (if set) are used as a fallback.</div>
+                ) : (
+                  <div className="conn-list">
+                    {settings.connections.map((c) => (
+                      <div className="conn-card" key={c.id}>
+                        <div className="conn-head">
+                          <div>
+                            <span className="dot unknown" />
+                            <span className="conn-name">{c.label || "Untitled connection"}</span>{" "}
+                            <span className="conn-provider">{PROVIDER_META[c.provider]?.label} · {c.model || "default model"}</span>
+                            {settings.defaultConnectionId === c.id && <span className="chip" style={{ marginLeft: 8 }}>default</span>}
+                          </div>
+                          <div className="conn-actions">
+                            {settings.defaultConnectionId !== c.id && (
+                              <button className="btn ghost sm" onClick={() => setDefault(c.id)}>Make default</button>
+                            )}
+                            <button className="btn ghost sm" onClick={() => setEditing(c)}>Edit</button>
+                            <button className="btn ghost sm" onClick={() => deleteConn(c.id)}>Delete</button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {settings.connections.length > 0 && (
+                  <>
+                    <div className="section-title">Task routing</div>
+                    <p className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
+                      Optionally send specific tasks to specific connections. Falls back to your default.
+                    </p>
+                    <div className="form-grid">
+                      {(["explain", "fix", "summary", "chat"] as AiTask[]).map((task) => (
+                        <div className="form-row" key={task}>
+                          <label>{task}</label>
+                          <select value={settings.routing[task] || ""} onChange={(e) => setRouting(task, e.target.value)}>
+                            <option value="">Use default</option>
+                            {settings.connections.map((c) => (
+                              <option key={c.id} value={c.id}>{c.label}</option>
+                            ))}
+                          </select>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </>
+            )
+          )}
+
+          {tab === "crawl" && (
+            <>
+              <p className="muted" style={{ fontSize: 12.5, marginBottom: 12 }}>
+                These are the defaults every audit uses beyond the quick &quot;max pages&quot; control on the
+                toolbar. There is no fixed page cap in this product — raise it as high as your target
+                site (and your patience for a single ~50s serverless run) allows; a crawl always stops
+                cleanly and reports &quot;truncated&quot; instead of failing.
+              </p>
+              <div className="form-grid">
+                <div className="form-row">
+                  <label>Default max pages ({CRAWL_LIMITS.maxPages} ceiling)</label>
+                  <input
+                    type="number" min={1} max={CRAWL_LIMITS.maxPages}
+                    value={settings.crawlDefaults.maxPages}
+                    onChange={(e) => setCrawl({ maxPages: Math.max(1, Math.min(CRAWL_LIMITS.maxPages, Number(e.target.value) || 1)) })}
+                  />
+                </div>
+                <div className="form-row">
+                  <label>Max crawl depth ({CRAWL_LIMITS.maxDepth} ceiling)</label>
+                  <input
+                    type="number" min={0} max={CRAWL_LIMITS.maxDepth}
+                    value={settings.crawlDefaults.maxDepth}
+                    onChange={(e) => setCrawl({ maxDepth: Math.max(0, Math.min(CRAWL_LIMITS.maxDepth, Number(e.target.value) || 0)) })}
+                  />
+                </div>
+                <div className="form-row">
+                  <label>Concurrency ({CRAWL_LIMITS.concurrency} ceiling)</label>
+                  <input
+                    type="number" min={1} max={CRAWL_LIMITS.concurrency}
+                    value={settings.crawlDefaults.concurrency}
+                    onChange={(e) => setCrawl({ concurrency: Math.max(1, Math.min(CRAWL_LIMITS.concurrency, Number(e.target.value) || 1)) })}
+                  />
+                </div>
+              </div>
+              <div className="toggle-row">
+                <span className="label">Respect robots.txt</span>
+                <input type="checkbox" checked={settings.crawlDefaults.respectRobots} onChange={(e) => setCrawl({ respectRobots: e.target.checked })} />
+              </div>
+              <div className="toggle-row">
+                <span className="label">Check external links for broken targets</span>
+                <input type="checkbox" checked={settings.crawlDefaults.checkExternalLinks} onChange={(e) => setCrawl({ checkExternalLinks: e.target.checked })} />
+              </div>
+            </>
+          )}
+        </div>
+        <div className="modal-footer">
+          <button className="btn ghost sm" onClick={onClose}>Close</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ConnectionForm({ value, onCancel, onSave }: { value: AiConnection; onCancel: () => void; onSave: (c: AiConnection) => void }) {
+  const [c, setC] = useState<AiConnection>(value);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string; latencyMs: number } | null>(null);
+  const meta = PROVIDER_META[c.provider];
+
+  const runTest = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = await fetch("/api/ai/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: c.provider, apiKey: c.apiKey, baseUrl: c.baseUrl, model: c.model }),
+      });
+      const data = await res.json();
+      setTestResult(data);
+      setC((cur) => ({ ...cur, lastTestedAt: new Date().toISOString(), lastTestOk: data.ok, lastTestMessage: data.message }));
+    } catch (e) {
+      setTestResult({ ok: false, message: e instanceof Error ? e.message : "Test failed.", latencyMs: 0 });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <div>
+      <div className="form-grid">
+        <div className="form-row">
+          <label>Provider</label>
+          <select
+            value={c.provider}
+            onChange={(e) => {
+              const provider = e.target.value as AiConnection["provider"];
+              const m = PROVIDER_META[provider];
+              setC((cur) => ({ ...cur, provider, baseUrl: m?.localDefault || cur.baseUrl }));
+            }}
+          >
+            {Object.entries(PROVIDER_META).map(([id, m]) => (
+              <option key={id} value={id}>{m.label}</option>
+            ))}
+          </select>
+          <span className="hint">{meta?.hint}</span>
+        </div>
+        <div className="form-row">
+          <label>Label</label>
+          <input type="text" placeholder="e.g. My OpenRouter key" value={c.label} onChange={(e) => setC({ ...c, label: e.target.value })} />
+        </div>
+        <div className="form-row">
+          <label>API key {meta?.needsKey ? "" : "(optional)"}</label>
+          <input type="password" placeholder={meta?.needsKey ? "required" : "leave blank if none"} value={c.apiKey || ""} onChange={(e) => setC({ ...c, apiKey: e.target.value })} />
+        </div>
+        <div className="form-row">
+          <label>Base URL override (optional)</label>
+          <input type="text" placeholder={c.provider === "custom" ? "https://your-endpoint/v1" : "leave blank for default"} value={c.baseUrl || ""} onChange={(e) => setC({ ...c, baseUrl: e.target.value })} />
+        </div>
+        <div className="form-row" style={{ gridColumn: "1 / -1" }}>
+          <label>Model (optional — leave blank for provider default)</label>
+          <input type="text" placeholder="e.g. gpt-4o-mini, claude-3-5-haiku-latest, llama3.2" value={c.model || ""} onChange={(e) => setC({ ...c, model: e.target.value })} />
+        </div>
+      </div>
+      {testResult && (
+        <div className={`notice ${testResult.ok ? "ok" : "bad"}`} style={{ marginTop: 12 }}>
+          <span className={`dot ${testResult.ok ? "ok" : "bad"}`} />{testResult.message} ({testResult.latencyMs}ms)
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap" }}>
+        <button className="btn sm" onClick={() => onSave(c)} disabled={!c.label.trim()}>Save connection</button>
+        <button className="btn ghost sm" onClick={runTest} disabled={testing}>{testing ? "Testing…" : "Test connection"}</button>
+        <button className="btn ghost sm" onClick={onCancel}>Cancel</button>
+      </div>
+    </div>
   );
 }
 
@@ -759,8 +1375,10 @@ function Roadmap() {
     "Opportunity engine with severity × scope × ease scoring",
     "Health scoring by category",
     "Real Core Web Vitals via Google PageSpeed",
-    "Evidence-grounded AI explain + fix playbooks (BYOK)",
-    "Live free-model discovery",
+    "Evidence-grounded AI explain + fix playbooks (BYOK, any provider)",
+    "Configurable crawl limits — no fixed page cap",
+    "Full BYOK: custom endpoints, local Ollama/LM Studio, live model discovery, connection testing",
+    "Mule: free-form chat assistant grounded in the current audit",
   ];
   const next = [
     "Durable queue + independent crawler workers (100k+ URLs)",
