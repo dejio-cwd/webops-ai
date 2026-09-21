@@ -1,0 +1,14 @@
+{
+  "name": "webops-ai-mvp",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node server.js",
+    "test": "node --test",
+    "check": "node --check premium.js && node --check api/audit.js && node --check api/models.js && node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
