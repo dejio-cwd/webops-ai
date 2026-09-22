@@ -14,6 +14,10 @@ function headers(serviceKey: string, prefer?: string) {
   return { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json", ...(prefer ? { Prefer: prefer } : {}) };
 }
 
+async function audit(config: { url: string; serviceKey: string }, organizationId: string, actorId: string, action: string, resourceId?: string) {
+  await fetch(`${config.url}/rest/v1/audit_events`, { method: "POST", headers: headers(config.serviceKey), body: JSON.stringify({ organization_id: organizationId, actor_id: actorId, action, resource_type: "project", resource_id: resourceId || null, metadata: {} }), cache: "no-store" }).catch(() => null);
+}
+
 export async function GET(request: Request) {
   const actor = await guardApiRequest(request, { bucket: "projects-read", limit: 60, requireAuth: true });
   if (isGuardResponse(actor)) return actor;
@@ -59,5 +63,6 @@ export async function POST(request: Request) {
   const projects = await projectResponse.json() as Project[];
   const project = projects[0];
   if (!project) return Response.json({ error: "Project creation returned no record." }, { status: 502 });
+  await audit(config, organizationId, actor.id, "project.created", project.id);
   return Response.json({ project }, { status: 201 });
 }

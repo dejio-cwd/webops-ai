@@ -12,6 +12,10 @@ function config() {
 function serviceHeaders(key: string, prefer?: string) {
   return { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json", ...(prefer ? { Prefer: prefer } : {}) };
 }
+async function audit(organizationId: string, actorId: string, action: string, resourceId?: string) {
+  const value = config(); if (!value) return;
+  await fetch(`${value.url}/rest/v1/audit_events`, { method: "POST", headers: serviceHeaders(value.key), body: JSON.stringify({ organization_id: organizationId, actor_id: actorId, action, resource_type: "organization_member", resource_id: resourceId || null, metadata: {} }), cache: "no-store" }).catch(() => null);
+}
 async function membership(actor: AuthenticatedActor, organizationId: string, allowed?: string[]) {
   const value = config(); if (!value) return null;
   const endpoint = `${value.url}/rest/v1/organization_members?select=role&organization_id=eq.${encodeURIComponent(organizationId)}&user_id=eq.${encodeURIComponent(actor.id)}&limit=1`;
@@ -64,6 +68,7 @@ export async function POST(request: Request) {
   const response = await fetch(`${value.url}/rest/v1/organization_members`, { method: "POST", headers: serviceHeaders(value.key, "resolution=merge-duplicates,return=representation"), body: JSON.stringify({ organization_id: organizationId, user_id: target.id, role }), cache: "no-store" });
   if (!response.ok) return Response.json({ error: "Unable to add workspace member." }, { status: 400 });
   const rows = await response.json() as Member[];
+  await audit(organizationId, actor.id, "member.added", target.id);
   return Response.json({ member: { ...rows[0], email } }, { status: 201 });
 }
 
@@ -80,6 +85,7 @@ export async function PATCH(request: Request) {
   const value = config(); if (!value) return Response.json({ error: "Membership service is not configured." }, { status: 503 });
   const response = await fetch(`${value.url}/rest/v1/organization_members?organization_id=eq.${organizationId}&user_id=eq.${userId}`, { method: "PATCH", headers: serviceHeaders(value.key, "return=representation"), body: JSON.stringify({ role }), cache: "no-store" });
   if (!response.ok) return Response.json({ error: "Unable to update role." }, { status: 400 });
+  await audit(organizationId, actor.id, "member.role_updated", userId);
   return Response.json({ member: (await response.json() as Member[])[0] });
 }
 
@@ -94,5 +100,7 @@ export async function DELETE(request: Request) {
   if (!await protectLastOwner(organizationId, userId)) return Response.json({ error: "The final workspace owner cannot be removed." }, { status: 409 });
   const value = config(); if (!value) return Response.json({ error: "Membership service is not configured." }, { status: 503 });
   const response = await fetch(`${value.url}/rest/v1/organization_members?organization_id=eq.${organizationId}&user_id=eq.${userId}`, { method: "DELETE", headers: serviceHeaders(value.key, "return=minimal"), cache: "no-store" });
-  return response.ok ? Response.json({ ok: true }) : Response.json({ error: "Unable to remove member." }, { status: 400 });
+  if (!response.ok) return Response.json({ error: "Unable to remove member." }, { status: 400 });
+  await audit(organizationId, actor.id, "member.removed", userId);
+  return Response.json({ ok: true });
 }
