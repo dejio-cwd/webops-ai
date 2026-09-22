@@ -72,6 +72,8 @@ export default function Home() {
   const [error, setError] = useState("");
   const [history, setHistory] = useState<AuditRunSummary[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [projectId, setProjectId] = useState("");
+  const [environment, setEnvironment] = useState("");
 
   const [settings, setSettings] = useState<AiSettings>(loadSettings());
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -143,6 +145,8 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           url,
+          projectId: projectId || undefined,
+          environment: environment || undefined,
           maxPages,
           maxDepth: settings.crawlDefaults.maxDepth,
           concurrency: settings.crawlDefaults.concurrency,
@@ -160,7 +164,14 @@ export default function Home() {
     } finally {
       setRunning(false);
     }
-  }, [url, maxPages, settings.crawlDefaults, loadHistory]);
+  }, [
+    url,
+    projectId,
+    environment,
+    maxPages,
+    settings.crawlDefaults,
+    loadHistory,
+  ]);
 
   const loadHistoricalAudit = useCallback(async (auditId: string) => {
     setError("");

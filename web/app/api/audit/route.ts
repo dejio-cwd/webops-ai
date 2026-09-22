@@ -97,6 +97,8 @@ export async function POST(request: Request) {
 
   let body: {
     url?: string;
+    projectId?: string;
+    environment?: string;
     maxPages?: number;
     maxDepth?: number;
     respectRobots?: boolean;
@@ -114,6 +116,32 @@ export async function POST(request: Request) {
     return Response.json({ error: "A url is required." }, { status: 400 });
 
   const withScheme = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+  const projectId = (body.projectId || "").trim();
+  const environment =
+    body.environment &&
+    ["production", "staging", "development"].includes(body.environment)
+      ? body.environment
+      : null;
+  let associatedProjectId: string | null = null;
+  const config = supabaseConfig();
+  if (projectId && config) {
+    const projectResponse = await fetch(
+      `${config.url}/rest/v1/projects?select=id,owner_id&id=eq.${encodeURIComponent(projectId)}&limit=1`,
+      { headers: supabaseHeaders(config.key), cache: "no-store" },
+    );
+    const projects = projectResponse.ok
+      ? ((await projectResponse.json()) as Array<{
+          id: string;
+          owner_id: string;
+        }>)
+      : [];
+    if (projects[0]?.owner_id !== actor.id)
+      return Response.json(
+        { error: "Project access denied." },
+        { status: 403 },
+      );
+    associatedProjectId = projects[0].id;
+  }
   const maxPages = clamp(body.maxPages ?? 20, 1, HARD_MAX_PAGES);
   const maxDepth = clamp(body.maxDepth ?? 3, 0, HARD_MAX_DEPTH);
   const concurrency = clamp(body.concurrency ?? 6, 1, HARD_MAX_CONCURRENCY);
@@ -127,18 +155,19 @@ export async function POST(request: Request) {
       checkExternalLinks: body.checkExternalLinks ?? true,
       deadlineMs: 50000,
     });
-    const config = supabaseConfig();
     if (config) {
       await fetch(`${config.url}/rest/v1/audit_runs`, {
         method: "POST",
         headers: supabaseHeaders(config.key),
         body: JSON.stringify({
           owner_id: actor.id,
+          project_id: associatedProjectId,
           url: withScheme,
           audit_id: result.auditId,
           engine_version: result.version,
           status: result.crawl.truncated ? "truncated" : "completed",
           summary: {
+            environment,
             pagesCrawled: result.crawl.pagesCrawled,
             findings: result.findings.length,
             opportunities: result.opportunities.length,
