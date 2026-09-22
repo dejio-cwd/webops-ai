@@ -27,7 +27,7 @@ async function candidates(project: Project, method: Verification["method"]) {
     return records.flatMap((result) => result.status === "fulfilled" ? result.value.map((parts) => parts.join("")) : []);
   }
   const path = method === "file" ? "/.well-known/webops-ai-verification.txt" : "/";
-  const target = await validateTarget(`https://${project.domain}${path}`);
+  const target = await validateTarget("https://" + project.domain + path);
   const response = await fetch(target, { redirect: "error", cache: "no-store", signal: AbortSignal.timeout(10_000), headers: { "User-Agent": "WebOpsAI-Verification/1.0" } });
   if (!response.ok) return [];
   const text = (await response.text()).slice(0, 1_000_000);
@@ -62,7 +62,7 @@ export async function POST(request: Request) {
     await fetch(`${value.url}/rest/v1/domain_verifications?project_id=eq.${project.id}&status=eq.pending`, { method: "DELETE", headers: headers(value.key), cache: "no-store" });
     const create = await fetch(`${value.url}/rest/v1/domain_verifications`, { method: "POST", headers: headers(value.key, "return=representation"), body: JSON.stringify({ project_id: project.id, method, token_hash: digest(marker), status: "pending" }), cache: "no-store" });
     if (!create.ok) return Response.json({ error: "Unable to start domain verification." }, { status: 502 });
-    const instructions = method === "dns" ? { type: "TXT", host: `_webops.${project.domain}`, value: marker } : method === "file" ? { path: `https://${project.domain}/.well-known/webops-ai-verification.txt`, value: marker } : { tag: `<meta name="webops-ai-verification" content="${marker}">` };
+    const instructions = method === "dns" ? { type: "TXT", host: `_webops.${project.domain}`, value: marker } : method === "file" ? { path: "https://" + project.domain + "/.well-known/webops-ai-verification.txt", value: marker } : { tag: `<meta name="webops-ai-verification" content="${marker}">` };
     return Response.json({ verification: (await create.json() as Verification[])[0], instructions }, { status: 201 });
   }
   const pendingResponse = await fetch(`${value.url}/rest/v1/domain_verifications?select=id,project_id,method,token_hash,status,verified_at,created_at&project_id=eq.${project.id}&method=eq.${method}&status=eq.pending&order=created_at.desc&limit=1`, { headers: headers(value.key), cache: "no-store" });
