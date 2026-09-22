@@ -60,5 +60,6 @@ export async function POST(request: Request) {
     await fetch(`${config.url}/rest/v1/organizations?id=eq.${organization.id}`, { method: "DELETE", headers: headers(config.serviceKey), cache: "no-store" });
     return Response.json({ error: "Unable to create workspace membership." }, { status: 502 });
   }
+  await fetch(`${config.url}/rest/v1/audit_events`, { method: "POST", headers: headers(config.serviceKey), body: JSON.stringify({ organization_id: organization.id, actor_id: actor.id, action: "organization.created", resource_type: "organization", resource_id: organization.id, metadata: {} }), cache: "no-store" }).catch(() => null);
   return Response.json({ organization }, { status: 201 });
 }
