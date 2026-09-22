@@ -1082,6 +1082,12 @@ function FixCenter({
               status: next,
               evidence: opp.sampleEvidence,
               recommendation: opp.recommendation,
+              verificationNote:
+                next === "verified"
+                  ? "Verified after rerunning the relevant audit rule."
+                  : undefined,
+              rollbackPlan:
+                "Revert the change and rerun the audit if the finding persists or a regression appears.",
             }),
           });
         };

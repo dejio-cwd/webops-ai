@@ -105,6 +105,8 @@ export async function POST(request: Request) {
       status: body.status,
       evidence: (body.evidence || []).slice(0, 10),
       recommendation: (body.recommendation || "").slice(0, 4000),
+      verification_note: (body.verificationNote || "").slice(0, 2000),
+      rollback_plan: (body.rollbackPlan || "").slice(0, 2000),
       updated_at: new Date().toISOString(),
     }),
     cache: "no-store",
