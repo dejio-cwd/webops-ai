@@ -199,6 +199,18 @@ export default function Home() {
     [audit],
   );
 
+  const exportAudit = useCallback(() => {
+    if (!audit) return;
+    const blob = new Blob([JSON.stringify(audit, null, 2)], {
+      type: "application/json",
+    });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `webops-audit-${new URL(audit.crawl.origin).hostname}-${audit.auditId}.json`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  }, [audit]);
+
   const loadHistoricalAudit = useCallback(async (auditId: string) => {
     setError("");
     const res = await fetch(
@@ -288,10 +300,15 @@ export default function Home() {
             )}
           </div>
           {audit && (
-            <div className="chip">
-              engine v{audit.version} ·{" "}
-              {new Date(audit.capturedAt).toLocaleString()}
-            </div>
+            <>
+              <button className="btn ghost sm" onClick={exportAudit}>
+                Export evidence JSON
+              </button>
+              <div className="chip">
+                engine v{audit.version} ·{" "}
+                {new Date(audit.capturedAt).toLocaleString()}
+              </div>
+            </>
           )}
         </div>
 
