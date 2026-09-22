@@ -1046,6 +1046,36 @@ function FixCenter({
     Record<string, "draft" | "ready" | "verified">
   >({});
   const [selected, setSelected] = useState<string | null>(null);
+  const [playbooks, setPlaybooks] = useState<Record<string, string>>({});
+  const [generating, setGenerating] = useState<string | null>(null);
+  const generatePlaybook = async (opp: Opportunity) => {
+    setGenerating(opp.id);
+    try {
+      const response = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: "fix",
+          opportunity: opp,
+          credential: fixCred,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok)
+        throw new Error(data?.error || "Unable to generate playbook.");
+      setPlaybooks((current) => ({ ...current, [opp.id]: data.text }));
+    } catch (error) {
+      setPlaybooks((current) => ({
+        ...current,
+        [opp.id]:
+          error instanceof Error
+            ? error.message
+            : "Unable to generate playbook.",
+      }));
+    } finally {
+      setGenerating(null);
+    }
+  };
   if (!audit.opportunities.length)
     return (
       <div className="empty">
@@ -1118,6 +1148,15 @@ function FixCenter({
               </div>
             </div>
             <div className="actions">
+              <button
+                className="btn ghost sm"
+                onClick={() => void generatePlaybook(opp)}
+                disabled={generating === opp.id}
+              >
+                {generating === opp.id
+                  ? "Generating…"
+                  : "Generate evidence-grounded playbook"}
+              </button>
               <button className="btn sm" onClick={() => void advance()}>
                 {state === "draft"
                   ? "Mark ready for approval"
@@ -1134,6 +1173,18 @@ function FixCenter({
                   : "Validation checklist"}
               </button>
             </div>
+            {playbooks[opp.id] && (
+              <div className="ai-out">
+                <b>Evidence-grounded playbook</b>
+                <br />
+                {playbooks[opp.id]}
+                <br />
+                <span className="muted">
+                  Validate affected URLs and retain the rollback plan before
+                  applying.
+                </span>
+              </div>
+            )}
             {selected === opp.id && (
               <div className="ai-out">
                 <b>Validation checklist</b>
