@@ -74,6 +74,8 @@ export async function POST(request: Request) {
     status?: "draft" | "ready" | "verified";
     evidence?: string[];
     recommendation?: string;
+    verificationNote?: string;
+    rollbackPlan?: string;
   };
   try {
     body = await request.json();
