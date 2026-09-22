@@ -479,7 +479,11 @@ export default function Home() {
           />
         )}
         {audit && active === "Fix Center" && (
-          <FixCenter audit={audit} fixCred={getCredential("fix")} />
+          <FixCenter
+            audit={audit}
+            fixCred={getCredential("fix")}
+            projectId={projectId}
+          />
         )}
         {active === "Roadmap" && <Roadmap />}
       </main>
@@ -1057,6 +1061,28 @@ function FixCenter({
       </div>
       {audit.opportunities.map((opp) => {
         const state = states[opp.id] || "draft";
+        const advance = async () => {
+          const next =
+            state === "draft"
+              ? "ready"
+              : state === "ready"
+                ? "verified"
+                : "draft";
+          setStates((current) => ({ ...current, [opp.id]: next }));
+          await fetch("/api/fixes", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              auditId: audit.auditId,
+              projectId: projectId || undefined,
+              opportunityId: opp.id,
+              title: opp.title,
+              status: next,
+              evidence: opp.sampleEvidence,
+              recommendation: opp.recommendation,
+            }),
+          });
+        };
         return (
           <div className="opp" key={opp.id}>
             <div className="opp-head">
