@@ -11,7 +11,7 @@ export async function POST(request: Request) {
   if (!url || !key) return NextResponse.json({ error: "Authentication is not configured." }, { status: 503 });
 
   const signupUrl = new URL(`${url.replace(/\/$/, "")}/auth/v1/signup`);
-  signupUrl.searchParams.set("redirect_to", new URL("/sign-in", request.url).toString());
+  signupUrl.searchParams.set("redirect_to", new URL("/sign-in?confirmed=1", request.url).toString());
   const upstream = await fetch(signupUrl, {
     method: "POST",
     headers: { apikey: key, "Content-Type": "application/json" },
