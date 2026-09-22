@@ -251,7 +251,7 @@ async function callOpenAiCompatible(
     },
     body: JSON.stringify({ model, max_tokens: maxTokens, temperature, messages }),
   });
-  if (!res.ok) throw new Error(`${cfg.provider} error ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  if (!res.ok) throw new Error(`${cfg.provider} request failed with status ${res.status}.`);
   const data = await res.json();
   return data.choices?.[0]?.message?.content ?? "";
 }
@@ -281,7 +281,7 @@ async function callAnthropic(
       messages: turns.map((t) => ({ role: t.role === "assistant" ? "assistant" : "user", content: t.content })),
     }),
   });
-  if (!res.ok) throw new Error(`Anthropic error ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  if (!res.ok) throw new Error(`Anthropic request failed with status ${res.status}.`);
   const data = await res.json();
   return (data.content || []).map((c: { text?: string }) => c.text || "").join("");
 }
@@ -295,17 +295,17 @@ async function callGoogle(
   temperature: number,
   signal: AbortSignal,
 ): Promise<string> {
-  const res = await fetch(`${cfg.baseUrl}/models/${model}:generateContent?key=${cfg.key}`, {
+  const res = await fetch(`${cfg.baseUrl}/models/${model}:generateContent`, {
     method: "POST",
     signal,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "x-goog-api-key": cfg.key! },
     body: JSON.stringify({
       systemInstruction: system ? { parts: [{ text: system }] } : undefined,
       contents: turns.map((t) => ({ role: t.role === "assistant" ? "model" : "user", parts: [{ text: t.content }] })),
       generationConfig: { temperature, maxOutputTokens: maxTokens },
     }),
   });
-  if (!res.ok) throw new Error(`Google AI error ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  if (!res.ok) throw new Error(`Google AI request failed with status ${res.status}.`);
   const data = await res.json();
   return (data.candidates?.[0]?.content?.parts || []).map((p: { text?: string }) => p.text || "").join("");
 }
@@ -378,7 +378,7 @@ async function listAnthropicModels(cfg: ResolvedConfig): Promise<ModelInfo[]> {
 
 async function listGoogleModels(cfg: ResolvedConfig): Promise<ModelInfo[]> {
   if (!cfg.key) return [];
-  const res = await fetch(`${cfg.baseUrl}/models?key=${cfg.key}`, { signal: AbortSignal.timeout(10000) });
+  const res = await fetch(`${cfg.baseUrl}/models`, { headers: { "x-goog-api-key": cfg.key }, signal: AbortSignal.timeout(10000) });
   if (!res.ok) return [];
   const payload = await res.json();
   return (payload.models || [])
@@ -413,7 +413,7 @@ export async function testCredential(cred: Credential): Promise<TestResult> {
   } catch (err) {
     return {
       ok: false,
-      message: err instanceof Error ? err.message : "Connection failed.",
+      message: "Connection failed. Verify the provider, key, endpoint, and model policy.",
       latencyMs: Date.now() - started,
       provider: cred.provider,
     };
