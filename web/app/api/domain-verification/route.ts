@@ -6,9 +6,13 @@ import { validateTarget } from "@/lib/ssrf";
 type Project = { id: string; owner_id: string; organization_id: string; domain: string; verified_at: string | null };
 type Verification = { id: string; project_id: string; method: "dns" | "file" | "meta"; token_hash: string; status: string; verified_at: string | null; created_at: string };
 
-function config() { const url = process.env.NEXT_PUBLIC_SUPABASE_URL; const key = process.env.SUPABASE_SERVICE_ROLE_KEY; return url && key ? { url: url.replace(/\/$/, ""), key } : null; }
+type Config = { url: string; key: string };
+function config(): Config | null { const url = process.env.NEXT_PUBLIC_SUPABASE_URL; const key = process.env.SUPABASE_SERVICE_ROLE_KEY; return url && key ? { url: url.replace(/\/$/, ""), key } : null; }
 function headers(key: string, prefer?: string) { return { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json", ...(prefer ? { Prefer: prefer } : {}) }; }
 function digest(value: string) { return createHash("sha256").update(value.trim()).digest("hex"); }
+async function audit(value: Config, organizationId: string, actorId: string, action: string, resourceId: string | null, metadata: Record<string, string | boolean> = {}) {
+  await fetch(`${value.url}/rest/v1/audit_events`, { method: "POST", headers: headers(value.key), body: JSON.stringify({ organization_id: organizationId, actor_id: actorId, action, resource_type: "domain_verification", resource_id: resourceId, metadata }), cache: "no-store" }).catch(() => null);
+}
 
 async function projectAccess(actor: AuthenticatedActor, projectId: string, mutate: boolean) {
   const value = config(); if (!value) return null;
@@ -62,18 +66,24 @@ export async function POST(request: Request) {
     await fetch(`${value.url}/rest/v1/domain_verifications?project_id=eq.${project.id}&status=eq.pending`, { method: "DELETE", headers: headers(value.key), cache: "no-store" });
     const create = await fetch(`${value.url}/rest/v1/domain_verifications`, { method: "POST", headers: headers(value.key, "return=representation"), body: JSON.stringify({ project_id: project.id, method, token_hash: digest(marker), status: "pending" }), cache: "no-store" });
     if (!create.ok) return Response.json({ error: "Unable to start domain verification." }, { status: 502 });
+    const verification = (await create.json() as Verification[])[0];
+    await audit(value, project.organization_id, actor.id, "domain_verification.started", verification?.id || null, { method });
     const instructions = method === "dns" ? { type: "TXT", host: `_webops.${project.domain}`, value: marker } : method === "file" ? { path: "https://" + project.domain + "/.well-known/webops-ai-verification.txt", value: marker } : { tag: `<meta name="webops-ai-verification" content="${marker}">` };
-    return Response.json({ verification: (await create.json() as Verification[])[0], instructions }, { status: 201 });
+    return Response.json({ verification, instructions }, { status: 201 });
   }
   const pendingResponse = await fetch(`${value.url}/rest/v1/domain_verifications?select=id,project_id,method,token_hash,status,verified_at,created_at&project_id=eq.${project.id}&method=eq.${method}&status=eq.pending&order=created_at.desc&limit=1`, { headers: headers(value.key), cache: "no-store" });
   const pending = pendingResponse.ok ? (await pendingResponse.json() as Verification[])[0] : null;
   if (!pending) return Response.json({ error: "Start verification before checking it." }, { status: 409 });
   try {
     const found = (await candidates(project, method)).some((candidate) => digest(candidate) === pending.token_hash);
-    if (!found) return Response.json({ verified: false, error: "Verification token was not found yet." }, { status: 409 });
+    if (!found) {
+      await audit(value, project.organization_id, actor.id, "domain_verification.check_failed", pending.id, { method, found: false });
+      return Response.json({ verified: false, error: "Verification token was not found yet." }, { status: 409 });
+    }
     const now = new Date().toISOString();
     await fetch(`${value.url}/rest/v1/domain_verifications?id=eq.${pending.id}`, { method: "PATCH", headers: headers(value.key), body: JSON.stringify({ status: "verified", verified_at: now }), cache: "no-store" });
     await fetch(`${value.url}/rest/v1/projects?id=eq.${project.id}`, { method: "PATCH", headers: headers(value.key), body: JSON.stringify({ verified_at: now }), cache: "no-store" });
+    await audit(value, project.organization_id, actor.id, "domain_verification.verified", pending.id, { method, found: true });
     return Response.json({ verified: true, verifiedAt: now });
-  } catch (error) { return Response.json({ verified: false, error: error instanceof Error ? error.message : "Verification check failed." }, { status: 502 }); }
+  } catch (error) { await audit(value, project.organization_id, actor.id, "domain_verification.check_error", pending.id, { method }); return Response.json({ verified: false, error: error instanceof Error ? error.message : "Verification check failed." }, { status: 502 }); }
 }
