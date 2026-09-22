@@ -412,6 +412,35 @@ export default function Home() {
               <span>Persistent findings</span>
               <b>{comparison.persistentFindings.length}</b>
             </div>
+            {comparison.regressions.length > 0 && (
+              <div style={{ marginTop: 14 }}>
+                <b style={{ color: "var(--bad)" }}>Regression alerts</b>
+                {comparison.regressions.slice(0, 8).map((finding) => (
+                  <div
+                    key={`${finding.ruleId}-${finding.url}`}
+                    className="kv"
+                    style={{ marginTop: 6 }}
+                  >
+                    <span>
+                      <span className={sevClass(finding.severity)}>
+                        {finding.severity}
+                      </span>{" "}
+                      {finding.title}
+                    </span>
+                    <span
+                      style={{
+                        maxWidth: 360,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {finding.url}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
         {running && !audit && (
