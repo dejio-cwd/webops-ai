@@ -92,6 +92,11 @@ export default function WorkspacePage() {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [monitorCadence, setMonitorCadence] = useState<"daily" | "weekly">(
+    "weekly",
+  );
+  const [monitorEnabled, setMonitorEnabled] = useState(true);
+  const [monitorStatus, setMonitorStatus] = useState("");
 
   const refreshWorkspace = useCallback(async () => {
     const [sessionResponse, organizationsResponse, projectsResponse] =
@@ -390,6 +395,36 @@ export default function WorkspacePage() {
     }
     setBusy(false);
   }
+  async function saveMonitoring() {
+    if (!activeProject) return;
+    setBusy(true);
+    clearMessages();
+    const response = await apiFetch("/api/monitoring", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId: activeProject.id,
+        cadence: monitorCadence,
+        enabled: monitorEnabled,
+      }),
+    });
+    const data = (await response.json()) as {
+      monitor?: { next_run_at?: string };
+      error?: string;
+    };
+    if (!response.ok)
+      setError(data.error || "Unable to save monitoring configuration.");
+    else {
+      setMonitorStatus(
+        data.monitor?.next_run_at
+          ? `Next scheduled run: ${new Date(data.monitor.next_run_at).toLocaleString()}`
+          : "Monitoring configuration saved.",
+      );
+      setNotice("Monitoring configuration saved.");
+    }
+    setBusy(false);
+  }
+
   async function checkVerification() {
     if (!activeProject) return;
     setBusy(true);
@@ -657,6 +692,59 @@ export default function WorkspacePage() {
     </section>
   );
 
+  const monitoringPanel = (
+    <section className={styles.console}>
+      <div className={styles.consoleHead}>
+        <div>
+          <span>CONTINUOUS INTELLIGENCE</span>
+          <h2>Scheduled monitoring</h2>
+          <p>
+            Configure governed recurring baselines for the active project. Runs
+            will use the evidence-first audit engine.
+          </p>
+        </div>
+      </div>
+      {activeProject ? (
+        <>
+          <div className={styles.inlineForm}>
+            <select
+              aria-label="Monitoring cadence"
+              value={monitorCadence}
+              onChange={(event) =>
+                setMonitorCadence(event.target.value as "daily" | "weekly")
+              }
+            >
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+            </select>
+            <label>
+              <input
+                type="checkbox"
+                checked={monitorEnabled}
+                onChange={(event) => setMonitorEnabled(event.target.checked)}
+              />{" "}
+              Enabled
+            </label>
+            <button
+              className={styles.primary}
+              onClick={saveMonitoring}
+              disabled={busy}
+            >
+              Save monitoring
+            </button>
+          </div>
+          {monitorStatus && (
+            <div className={styles.instructions}>{monitorStatus}</div>
+          )}
+        </>
+      ) : (
+        <div className={styles.emptyState}>
+          <p>Create a project before configuring monitoring.</p>
+        </div>
+      )}
+    </section>
+  );
+
   const securityPanel = (
     <section className={styles.console}>
       <div className={styles.consoleHead}>
@@ -887,6 +975,8 @@ export default function WorkspacePage() {
           teamPanel
         ) : active === "Security" ? (
           securityPanel
+        ) : active === "Monitoring" ? (
+          monitoringPanel
         ) : (
           <section className={styles.modulePanel}>
             <div>
