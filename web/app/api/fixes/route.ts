@@ -15,6 +15,36 @@ function headers(key: string, prefer?: string) {
   };
 }
 
+async function canManageProject(
+  value: Config,
+  projectId: string,
+  actorId: string,
+) {
+  const projectResponse = await fetch(
+    `${value.url}/rest/v1/projects?select=id,owner_id,organization_id&id=eq.${encodeURIComponent(projectId)}&limit=1`,
+    { headers: headers(value.key), cache: "no-store" },
+  );
+  const projects = projectResponse.ok
+    ? ((await projectResponse.json()) as Array<{
+        id: string;
+        owner_id: string;
+        organization_id: string | null;
+      }>)
+    : [];
+  const project = projects[0];
+  if (!project) return false;
+  if (project.owner_id === actorId) return true;
+  if (!project.organization_id) return false;
+  const memberResponse = await fetch(
+    `${value.url}/rest/v1/organization_members?select=role&organization_id=eq.${encodeURIComponent(project.organization_id)}&user_id=eq.${encodeURIComponent(actorId)}&limit=1`,
+    { headers: headers(value.key), cache: "no-store" },
+  );
+  const members = memberResponse.ok
+    ? ((await memberResponse.json()) as Array<{ role: string }>)
+    : [];
+  return ["owner", "admin", "developer"].includes(members[0]?.role || "");
+}
+
 export async function GET(request: Request) {
   const actor = await guardApiRequest(request, {
     bucket: "fixes-read",
@@ -82,6 +112,17 @@ export async function POST(request: Request) {
   } catch {
     return Response.json({ error: "Invalid request." }, { status: 400 });
   }
+  if (
+    body.projectId &&
+    !(await canManageProject(value, body.projectId, actor.id))
+  )
+    return Response.json(
+      {
+        error:
+          "Owner, admin, or developer access required for Fix Center changes.",
+      },
+      { status: 403 },
+    );
   if (
     !body.auditId ||
     !body.opportunityId ||
