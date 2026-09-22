@@ -97,6 +97,12 @@ export default function WorkspacePage() {
   );
   const [monitorEnabled, setMonitorEnabled] = useState(true);
   const [monitorStatus, setMonitorStatus] = useState("");
+  const [monitorInfo, setMonitorInfo] = useState<{
+    enabled: boolean;
+    cadence: string;
+    last_run_at: string | null;
+    next_run_at: string | null;
+  } | null>(null);
 
   const refreshWorkspace = useCallback(async () => {
     const [sessionResponse, organizationsResponse, projectsResponse] =
@@ -177,6 +183,34 @@ export default function WorkspacePage() {
       refreshInvitations(organization.id).catch(() => null);
     }
   }, [organization, refreshMembers, refreshInvitations]);
+  useEffect(() => {
+    if (!activeProject) {
+      setMonitorInfo(null);
+      return;
+    }
+    apiFetch(
+      `/api/monitoring?projectId=${encodeURIComponent(activeProject.id)}`,
+    )
+      .then(async (response) => {
+        if (!response.ok) return;
+        const data = (await response.json()) as {
+          monitors?: Array<{
+            enabled: boolean;
+            cadence: string;
+            last_run_at: string | null;
+            next_run_at: string | null;
+          }>;
+        };
+        const monitor = data.monitors?.[0] || null;
+        setMonitorInfo(monitor);
+        if (monitor) {
+          setMonitorCadence(monitor.cadence as "daily" | "weekly");
+          setMonitorEnabled(monitor.enabled);
+        }
+      })
+      .catch(() => null);
+  }, [activeProject?.id]);
+
   useEffect(() => {
     const stored = window.localStorage.getItem("webops-theme");
     if (stored === "light") setTheme("light");
