@@ -1,7 +1,6 @@
 import { runAudit } from "@/lib/audit";
 import { compareAudits } from "@/lib/audit-comparison";
 import type { AuditResult } from "@/lib/types";
-import type { AuditResult } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
