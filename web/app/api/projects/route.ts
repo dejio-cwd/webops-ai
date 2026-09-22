@@ -17,6 +17,13 @@ function headers(serviceKey: string, prefer?: string) {
 async function audit(config: { url: string; serviceKey: string }, organizationId: string, actorId: string, action: string, resourceId?: string) {
   await fetch(`${config.url}/rest/v1/audit_events`, { method: "POST", headers: headers(config.serviceKey), body: JSON.stringify({ organization_id: organizationId, actor_id: actorId, action, resource_type: "project", resource_id: resourceId || null, metadata: {} }), cache: "no-store" }).catch(() => null);
 }
+async function memberRole(config: { url: string; serviceKey: string }, organizationId: string, userId: string) {
+  const response = await fetch(`${config.url}/rest/v1/organization_members?select=role&organization_id=eq.${encodeURIComponent(organizationId)}&user_id=eq.${encodeURIComponent(userId)}&limit=1`, { headers: headers(config.serviceKey), cache: "no-store" });
+  if (!response.ok) return null;
+  const rows = await response.json() as Array<{ role: string }>;
+  return rows[0]?.role || null;
+}
+
 
 export async function GET(request: Request) {
   const actor = await guardApiRequest(request, { bucket: "projects-read", limit: 60, requireAuth: true });
@@ -65,4 +72,23 @@ export async function POST(request: Request) {
   if (!project) return Response.json({ error: "Project creation returned no record." }, { status: 502 });
   await audit(config, organizationId, actor.id, "project.created", project.id);
   return Response.json({ project }, { status: 201 });
+}
+
+
+export async function DELETE(request: Request) {
+  const actor = await guardApiRequest(request, { bucket: "projects-delete", limit: 6, windowMs: 300_000, maxBodyBytes: 8_000, requireAuth: true });
+  if (isGuardResponse(actor)) return actor;
+  if (!actor) return Response.json({ error: "Authentication required." }, { status: 401 });
+  const config = configuration();
+  if (!config) return Response.json({ error: "Project service is not configured." }, { status: 503 });
+  let body: { projectId?: string; organizationId?: string };
+  try { body = await request.json(); } catch { return Response.json({ error: "Invalid request." }, { status: 400 }); }
+  const projectId = (body.projectId || "").trim(); const organizationId = (body.organizationId || "").trim();
+  if (!projectId || !organizationId) return Response.json({ error: "Project and workspace are required." }, { status: 400 });
+  const role = await memberRole(config, organizationId, actor.id);
+  if (!role || !["owner", "admin"].includes(role)) return Response.json({ error: "Owner or admin access required." }, { status: 403 });
+  const response = await fetch(`${config.url}/rest/v1/projects?id=eq.${encodeURIComponent(projectId)}&organization_id=eq.${encodeURIComponent(organizationId)}`, { method: "DELETE", headers: headers(config.serviceKey, "return=minimal"), cache: "no-store" });
+  if (!response.ok) return Response.json({ error: "Unable to delete project." }, { status: 400 });
+  await audit(config, organizationId, actor.id, "project.deleted", projectId);
+  return Response.json({ ok: true });
 }
