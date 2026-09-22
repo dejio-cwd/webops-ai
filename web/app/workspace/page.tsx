@@ -97,6 +97,15 @@ export default function WorkspacePage() {
   );
   const [monitorEnabled, setMonitorEnabled] = useState(true);
   const [monitorStatus, setMonitorStatus] = useState("");
+  const [monitorAlerts, setMonitorAlerts] = useState<
+    Array<{
+      id: string;
+      severity: string;
+      summary: { regressions?: number; healthScoreDelta?: number };
+      status: string;
+      created_at: string;
+    }>
+  >([]);
 
   const refreshWorkspace = useCallback(async () => {
     const [sessionResponse, organizationsResponse, projectsResponse] =
@@ -396,6 +405,31 @@ export default function WorkspacePage() {
     }
     setBusy(false);
   }
+  async function loadMonitoringAlerts() {
+    if (!activeProject) return;
+    const response = await apiFetch(
+      `/api/monitoring/alerts?projectId=${encodeURIComponent(activeProject.id)}`,
+    );
+    if (response.ok) {
+      const data = (await response.json()) as { alerts?: typeof monitorAlerts };
+      setMonitorAlerts(data.alerts || []);
+    }
+  }
+  async function updateMonitoringAlert(
+    alertId: string,
+    status: "acknowledged" | "resolved",
+  ) {
+    const response = await apiFetch("/api/monitoring/alerts", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ alertId, status }),
+    });
+    if (response.ok) {
+      setNotice(`Monitoring alert ${status}.`);
+      await loadMonitoringAlerts();
+    }
+  }
+
   async function saveMonitoring() {
     if (!activeProject) return;
     setBusy(true);
@@ -736,6 +770,46 @@ export default function WorkspacePage() {
           </div>
           {monitorStatus && (
             <div className={styles.instructions}>{monitorStatus}</div>
+          )}
+          <div className={styles.inlineForm}>
+            <button onClick={loadMonitoringAlerts} disabled={!activeProject}>
+              Refresh alerts
+            </button>
+          </div>
+          {monitorAlerts.length > 0 && (
+            <div className={styles.memberList}>
+              {monitorAlerts.map((alert) => (
+                <article key={alert.id}>
+                  <div>
+                    <b>{alert.severity.toUpperCase()} regression alert</b>
+                    <small>
+                      {new Date(alert.created_at).toLocaleString()} ·{" "}
+                      {alert.summary.regressions || 0} regressions · score Δ{" "}
+                      {alert.summary.healthScoreDelta ?? "—"}
+                    </small>
+                  </div>
+                  <span>{alert.status}</span>
+                  {alert.status === "open" && (
+                    <button
+                      onClick={() =>
+                        updateMonitoringAlert(alert.id, "acknowledged")
+                      }
+                    >
+                      Acknowledge
+                    </button>
+                  )}
+                  {alert.status !== "resolved" && (
+                    <button
+                      onClick={() =>
+                        updateMonitoringAlert(alert.id, "resolved")
+                      }
+                    >
+                      Resolve
+                    </button>
+                  )}
+                </article>
+              ))}
+            </div>
           )}
         </>
       ) : (
