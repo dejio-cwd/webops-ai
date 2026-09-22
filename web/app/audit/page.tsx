@@ -1036,9 +1036,11 @@ function OppCard({
 function FixCenter({
   audit,
   fixCred,
+  projectId,
 }: {
   audit: AuditResult;
   fixCred: Credential;
+  projectId: string;
 }) {
   const [states, setStates] = useState<
     Record<string, "draft" | "ready" | "verified">
@@ -1110,20 +1112,7 @@ function FixCenter({
               </div>
             </div>
             <div className="actions">
-              <button
-                className="btn sm"
-                onClick={() =>
-                  setStates((current) => ({
-                    ...current,
-                    [opp.id]:
-                      state === "draft"
-                        ? "ready"
-                        : state === "ready"
-                          ? "verified"
-                          : "draft",
-                  }))
-                }
-              >
+              <button className="btn sm" onClick={() => void advance()}>
                 {state === "draft"
                   ? "Mark ready for approval"
                   : state === "ready"
