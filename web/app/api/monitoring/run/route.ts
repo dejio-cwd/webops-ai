@@ -1,4 +1,6 @@
 import { runAudit } from "@/lib/audit";
+import { compareAudits } from "@/lib/audit-comparison";
+import type { AuditResult } from "@/lib/types";
 import type { AuditResult } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -64,6 +66,16 @@ export async function GET(request: Request) {
       continue;
     }
     try {
+      const previousResponse = await fetch(
+        `${value.url}/rest/v1/audit_runs?select=result&owner_id=eq.${encodeURIComponent(monitor.owner_id)}&project_id=eq.${encodeURIComponent(monitor.project_id)}&order=created_at.desc&limit=1`,
+        { headers: headers(value.key), cache: "no-store" },
+      );
+      const previousRows = previousResponse.ok
+        ? ((await previousResponse.json()) as Array<{
+            result: AuditResult | null;
+          }>)
+        : [];
+      const previous = previousRows[0]?.result;
       const audit = await runAudit(`https://${project.domain}`, {
         maxPages: 20,
         maxDepth: 3,
@@ -94,6 +106,32 @@ export async function GET(request: Request) {
         }),
         cache: "no-store",
       });
+      if (previous) {
+        const comparison = compareAudits(previous, audit);
+        if (comparison.regressions.length)
+          await fetch(`${value.url}/rest/v1/monitoring_alerts`, {
+            method: "POST",
+            headers: headers(value.key),
+            body: JSON.stringify({
+              owner_id: monitor.owner_id,
+              project_id: monitor.project_id,
+              audit_id: audit.auditId,
+              kind: "regression",
+              severity: comparison.regressions.some(
+                (finding) => finding.severity === "critical",
+              )
+                ? "critical"
+                : "high",
+              summary: {
+                regressions: comparison.regressions.length,
+                newFindings: comparison.newFindings.length,
+                healthScoreDelta: comparison.healthScoreDelta,
+              },
+              status: "open",
+            }),
+            cache: "no-store",
+          });
+      }
       const next = new Date(
         Date.now() + (monitor.cadence === "daily" ? 86400000 : 604800000),
       ).toISOString();
