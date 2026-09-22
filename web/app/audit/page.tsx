@@ -34,6 +34,7 @@ const MODULES = [
   "Performance",
   "Links & Images",
   "AI Studio",
+  "Fix Center",
   "Roadmap",
 ] as const;
 type Module = (typeof MODULES)[number];
@@ -476,6 +477,9 @@ export default function Home() {
             onOpenSettings={openSettings}
             audit={audit}
           />
+        )}
+        {audit && active === "Fix Center" && (
+          <FixCenter audit={audit} fixCred={getCredential("fix")} />
         )}
         {active === "Roadmap" && <Roadmap />}
       </main>
@@ -1019,6 +1023,117 @@ function OppCard({
         </div>
       )}
       {out && <div className="ai-out">{out}</div>}
+    </div>
+  );
+}
+
+/* ------- Fix Center ------- */
+
+function FixCenter({
+  audit,
+  fixCred,
+}: {
+  audit: AuditResult;
+  fixCred: Credential;
+}) {
+  const [states, setStates] = useState<
+    Record<string, "draft" | "ready" | "verified">
+  >({});
+  const [selected, setSelected] = useState<string | null>(null);
+  if (!audit.opportunities.length)
+    return (
+      <div className="empty">
+        No evidence-backed fixes are currently required.
+      </div>
+    );
+  return (
+    <div>
+      <div className="card" style={{ marginBottom: 16 }}>
+        <h3>Fix Center</h3>
+        <p className="muted">
+          Evidence-backed resolution queue. Move a recommendation through draft,
+          ready for approval, and verified only after validation.
+        </p>
+      </div>
+      {audit.opportunities.map((opp) => {
+        const state = states[opp.id] || "draft";
+        return (
+          <div className="opp" key={opp.id}>
+            <div className="opp-head">
+              <div style={{ flex: 1 }}>
+                <h4>{opp.title}</h4>
+                <div className="meta">
+                  <span className={sevClass(opp.severity)}>{opp.severity}</span>
+                  <span className="chip">
+                    {opp.affectedCount} affected pages
+                  </span>
+                  <span className="chip">state: {state}</span>
+                </div>
+                <p>
+                  <b>Evidence:</b>{" "}
+                  {opp.sampleEvidence.slice(0, 2).join(" · ") ||
+                    "Recorded by deterministic rule engine."}
+                </p>
+                <p>
+                  <b>Recommended resolution:</b> {opp.recommendation}
+                </p>
+              </div>
+              <div className="opp-score">
+                <b style={{ color: scoreColor(opp.score) }}>{opp.score}</b>
+                <span>priority</span>
+              </div>
+            </div>
+            <div className="actions">
+              <button
+                className="btn sm"
+                onClick={() =>
+                  setStates((current) => ({
+                    ...current,
+                    [opp.id]:
+                      state === "draft"
+                        ? "ready"
+                        : state === "ready"
+                          ? "verified"
+                          : "draft",
+                  }))
+                }
+              >
+                {state === "draft"
+                  ? "Mark ready for approval"
+                  : state === "ready"
+                    ? "Mark verified"
+                    : "Reopen fix"}
+              </button>
+              <button
+                className="btn ghost sm"
+                onClick={() => setSelected(selected === opp.id ? null : opp.id)}
+              >
+                {selected === opp.id
+                  ? "Hide validation"
+                  : "Validation checklist"}
+              </button>
+            </div>
+            {selected === opp.id && (
+              <div className="ai-out">
+                <b>Validation checklist</b>
+                <br />
+                1. Apply the change only to the affected scope.
+                <br />
+                2. Re-run the relevant audit rule.
+                <br />
+                3. Confirm the affected URL and evidence changed.
+                <br />
+                4. Roll back if the finding persists or a regression appears.
+                <br />
+                <span className="muted">
+                  AI playbook generation remains governed by the selected
+                  server-side credential.
+                </span>
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
