@@ -52,7 +52,7 @@ export default function WorkspacePage() {
   }, []);
 
   const activeProject = projects[0];
-  const projectTarget = activeProject ? `/?url=${encodeURIComponent(`https://${activeProject.domain}`)}` : "/onboarding";
+  const projectTarget = activeProject ? "/?url=" + encodeURIComponent("https://" + activeProject.domain) : "/onboarding";
 
   async function signOut() {
     await fetch("/api/auth/logout", { method: "POST" });
