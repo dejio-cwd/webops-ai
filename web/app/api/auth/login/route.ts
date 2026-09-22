@@ -12,7 +12,7 @@ export async function POST(request: Request) {
   const upstream = await fetch(`${url.replace(/\/$/, "")}/auth/v1/token?grant_type=password`, { method: "POST", headers: { apikey: key, "Content-Type": "application/json" }, body: JSON.stringify(body), cache: "no-store" });
   const data = await upstream.json();
   if (!upstream.ok) return NextResponse.json({ error: data.error_description || data.msg || "Sign in failed." }, { status: 401 });
-  const response = NextResponse.json({ user: { id: data.user?.id, email: data.user?.email }, expiresIn: data.expires_in });
+  const response = NextResponse.json({ user: { id: data.user?.id, email: data.user?.email }, expiresIn: data.expires_in, next: "/workspace" });
   const secure = process.env.NODE_ENV === "production";
   response.cookies.set("webops_access", data.access_token, { httpOnly: true, secure, sameSite: "lax", path: "/", maxAge: data.expires_in || 3600 });
   response.cookies.set("webops_refresh", data.refresh_token, { httpOnly: true, secure, sameSite: "strict", path: "/api/auth", maxAge: 60 * 60 * 24 * 30 });
