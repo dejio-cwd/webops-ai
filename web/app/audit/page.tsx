@@ -74,6 +74,14 @@ export default function Home() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [projectId, setProjectId] = useState("");
   const [environment, setEnvironment] = useState("");
+  const [comparison, setComparison] = useState<{
+    healthScoreDelta: number;
+    pagesCrawledDelta: number;
+    newFindings: Finding[];
+    resolvedFindings: Finding[];
+    persistentFindings: Finding[];
+    regressions: Finding[];
+  } | null>(null);
 
   const [settings, setSettings] = useState<AiSettings>(loadSettings());
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -172,6 +180,23 @@ export default function Home() {
     settings.crawlDefaults,
     loadHistory,
   ]);
+
+  const compareWithCurrent = useCallback(
+    async (beforeId: string) => {
+      if (!audit) return;
+      const res = await fetch(
+        `/api/audit?before=${encodeURIComponent(beforeId)}&after=${encodeURIComponent(audit.auditId)}`,
+        { cache: "no-store" },
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data?.error || "Unable to compare audits.");
+        return;
+      }
+      setComparison(data.comparison);
+    },
+    [audit],
+  );
 
   const loadHistoricalAudit = useCallback(async (auditId: string) => {
     setError("");
@@ -348,13 +373,46 @@ export default function Home() {
         )}
 
         {!audit && !running && <Welcome />}
-        {!audit && !running && (
+        {!running && (
           <AuditHistory
             runs={history}
             loading={historyLoading}
             onRefresh={loadHistory}
             onOpen={loadHistoricalAudit}
+            audit={audit}
+            compareWithCurrent={compareWithCurrent}
           />
+        )}
+        {comparison && (
+          <div className="card" style={{ marginTop: 16 }}>
+            <h3>Audit comparison</h3>
+            <div className="sub">
+              Evidence delta from the selected historical run to the current
+              audit.
+            </div>
+            <div className="kv">
+              <span>Health score change</span>
+              <b>
+                {comparison.healthScoreDelta > 0 ? "+" : ""}
+                {comparison.healthScoreDelta}
+              </b>
+            </div>
+            <div className="kv">
+              <span>New findings / regressions</span>
+              <b>
+                {comparison.newFindings.length} /{" "}
+                {comparison.regressions.length}
+              </b>
+            </div>
+            <div className="kv">
+              <span>Resolved findings</span>
+              <b>{comparison.resolvedFindings.length}</b>
+            </div>
+            <div className="kv">
+              <span>Persistent findings</span>
+              <b>{comparison.persistentFindings.length}</b>
+            </div>
+          </div>
         )}
         {running && !audit && (
           <div className="empty">
@@ -412,11 +470,15 @@ function AuditHistory({
   loading,
   onRefresh,
   onOpen,
+  audit,
+  compareWithCurrent,
 }: {
   runs: AuditRunSummary[];
   loading: boolean;
   onRefresh: () => void;
   onOpen: (auditId: string) => void;
+  audit: AuditResult | null;
+  compareWithCurrent: (auditId: string) => void;
 }) {
   return (
     <div className="card" style={{ marginTop: 16 }}>
@@ -476,6 +538,17 @@ function AuditHistory({
             {run.summary.pagesCrawled ?? 0} pages · score{" "}
             {run.summary.healthScore ?? "—"}
           </span>
+          {audit && audit.auditId !== run.audit_id && (
+            <span
+              onClick={(event) => {
+                event.stopPropagation();
+                compareWithCurrent(run.audit_id);
+              }}
+              style={{ color: "var(--brand-2)" }}
+            >
+              Compare
+            </span>
+          )}
         </button>
       ))}
     </div>

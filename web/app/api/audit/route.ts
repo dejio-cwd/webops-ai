@@ -6,6 +6,8 @@
 // The route is authenticated because crawling is an expensive outbound operation.
 
 import { runAudit } from "@/lib/audit";
+import { compareAudits } from "@/lib/audit-comparison";
+import type { AuditResult } from "@/lib/types";
 import { SsrfError } from "@/lib/ssrf";
 import { guardApiRequest, isGuardResponse } from "@/lib/security/api-guard";
 import {
@@ -51,7 +53,37 @@ export async function GET(request: Request) {
       { runs: [] },
       { headers: { "Cache-Control": "no-store" } },
     );
-  const auditId = new URL(request.url).searchParams.get("auditId") || "";
+  const searchParams = new URL(request.url).searchParams;
+  const auditId = searchParams.get("auditId") || "";
+  const beforeId = searchParams.get("before") || "";
+  const afterId = searchParams.get("after") || "";
+  if (beforeId && afterId) {
+    const comparisonEndpoint = `${config.url}/rest/v1/audit_runs?select=audit_id,result&owner_id=eq.${encodeURIComponent(actor.id)}&audit_id=in.(${encodeURIComponent(beforeId)},${encodeURIComponent(afterId)})`;
+    const comparisonResponse = await fetch(comparisonEndpoint, {
+      headers: supabaseHeaders(config.key),
+      cache: "no-store",
+    });
+    if (!comparisonResponse.ok)
+      return Response.json(
+        { error: "Unable to load audit comparison." },
+        { status: 502 },
+      );
+    const rows = (await comparisonResponse.json()) as Array<{
+      audit_id: string;
+      result: AuditResult | null;
+    }>;
+    const before = rows.find((row) => row.audit_id === beforeId)?.result;
+    const after = rows.find((row) => row.audit_id === afterId)?.result;
+    return before && after
+      ? Response.json(
+          { comparison: compareAudits(before, after) },
+          { headers: { "Cache-Control": "no-store" } },
+        )
+      : Response.json(
+          { error: "Both audits must belong to the current account." },
+          { status: 404 },
+        );
+  }
   const select = auditId
     ? "id,url,audit_id,engine_version,status,summary,result,created_at,completed_at"
     : "id,url,audit_id,engine_version,status,summary,created_at,completed_at";
