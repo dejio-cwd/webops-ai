@@ -92,3 +92,23 @@ export async function DELETE(request: Request) {
   await audit(config, organizationId, actor.id, "project.deleted", projectId);
   return Response.json({ ok: true });
 }
+
+
+export async function PATCH(request: Request) {
+  const actor = await guardApiRequest(request, { bucket: "projects-update", limit: 20, maxBodyBytes: 8_000, requireAuth: true });
+  if (isGuardResponse(actor)) return actor;
+  if (!actor) return Response.json({ error: "Authentication required." }, { status: 401 });
+  const config = configuration();
+  if (!config) return Response.json({ error: "Project service is not configured." }, { status: 503 });
+  let body: { projectId?: string; organizationId?: string; environment?: string };
+  try { body = await request.json(); } catch { return Response.json({ error: "Invalid request." }, { status: 400 }); }
+  const projectId = (body.projectId || "").trim(); const organizationId = (body.organizationId || "").trim(); const environment = body.environment || "";
+  if (!projectId || !organizationId || !["production", "staging", "development"].includes(environment)) return Response.json({ error: "Project, workspace, and a valid environment are required." }, { status: 400 });
+  const role = await memberRole(config, organizationId, actor.id);
+  if (!role || !["owner", "admin", "developer"].includes(role)) return Response.json({ error: "Owner, admin, or developer access is required." }, { status: 403 });
+  const response = await fetch(`${config.url}/rest/v1/projects?id=eq.${encodeURIComponent(projectId)}&organization_id=eq.${encodeURIComponent(organizationId)}`, { method: "PATCH", headers: headers(config.serviceKey, "return=representation"), body: JSON.stringify({ environment }), cache: "no-store" });
+  if (!response.ok) return Response.json({ error: "Unable to update project environment." }, { status: 400 });
+  const projects = await response.json() as Project[];
+  await audit(config, organizationId, actor.id, "project.environment_updated", projectId);
+  return Response.json({ project: projects[0] || null });
+}
