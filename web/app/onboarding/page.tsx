@@ -5,18 +5,19 @@ import { useRouter } from "next/navigation";
 import styles from "./onboarding.module.css";
 
 type Organization = { id: string; name: string; slug: string };
+type Membership = { organizations: Organization | null };
 export default function OnboardingPage() {
   const router = useRouter(); const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [organizationName, setOrganizationName] = useState(""); const [projectName, setProjectName] = useState(""); const [domain, setDomain] = useState("");
   const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [step, setStep] = useState(1);
-  useEffect(() => { fetch("/api/organizations").then((r) => r.json()).then((data) => { const list = (data.memberships || []).map((item: any) => item.organizations).filter(Boolean); setOrganizations(list); if (list.length) setStep(2); }).catch(() => null); }, []);
+  useEffect(() => { fetch("/api/organizations").then((r) => r.json()).then((data: { memberships?: Membership[] }) => { const list = (data.memberships || []).map((item) => item.organizations).filter((item): item is Organization => Boolean(item)); setOrganizations(list); if (list.length) setStep(2); }).catch(() => null); }, []);
   async function submit(event: FormEvent) {
     event.preventDefault(); setBusy(true); setError("");
     try {
       let organization = organizations[0];
       if (!organization) {
         const response = await fetch("/api/organizations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: organizationName }) });
-        const data = await response.json(); if (!response.ok) throw new Error(data.error || "Unable to create workspace."); organization = data.organization; setOrganizations([organization]); setStep(2);
+        const data = await response.json(); if (!response.ok) throw new Error(data.error || "Unable to create workspace."); organization = data.organization as Organization; setOrganizations([organization]); setStep(2);
       }
       if (!projectName || !domain) { setBusy(false); return; }
       const projectResponse = await fetch("/api/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ organizationId: organization.id, name: projectName, domain }) });
