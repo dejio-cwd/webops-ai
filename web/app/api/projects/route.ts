@@ -20,7 +20,13 @@ export async function GET(request: Request) {
   if (!actor) return Response.json({ error: "Authentication required." }, { status: 401 });
   const config = configuration();
   if (!config) return Response.json({ error: "Project service is not configured." }, { status: 503 });
-  const endpoint = `${config.url}/rest/v1/projects?select=id,name,domain,environment,verified_at,organization_id,created_at&owner_id=eq.${encodeURIComponent(actor.id)}&order=created_at.desc`;
+  const membershipResponse = await fetch(`${config.url}/rest/v1/organization_members?select=organization_id&user_id=eq.${encodeURIComponent(actor.id)}`, { headers: headers(config.serviceKey), cache: "no-store" });
+  if (!membershipResponse.ok) return Response.json({ error: "Unable to verify workspace access." }, { status: 502 });
+  const memberships = await membershipResponse.json() as Array<{ organization_id: string }>;
+  const organizationIds = memberships.map((item) => item.organization_id).filter((id) => /^[0-9a-f-]{36}$/i.test(id));
+  const queries = [`owner_id=eq.${encodeURIComponent(actor.id)}`];
+  if (organizationIds.length) queries.push(`organization_id=in.(${organizationIds.join(",")})`);
+  const endpoint = `${config.url}/rest/v1/projects?select=id,name,domain,environment,verified_at,organization_id,created_at&or=(${queries.join(",")})&order=created_at.desc`;
   const upstream = await fetch(endpoint, { headers: headers(config.serviceKey), cache: "no-store" });
   if (!upstream.ok) return Response.json({ error: "Unable to load projects." }, { status: 502 });
   const projects = await upstream.json() as Project[];
@@ -44,7 +50,7 @@ export async function POST(request: Request) {
   const membershipResponse = await fetch(membershipEndpoint, { headers: headers(config.serviceKey), cache: "no-store" });
   if (!membershipResponse.ok) return Response.json({ error: "Unable to verify workspace access." }, { status: 502 });
   const memberships = await membershipResponse.json() as Membership[];
-  if (!memberships.length) return Response.json({ error: "You do not have access to this workspace." }, { status: 403 });
+  if (!memberships.length || !["owner", "admin", "developer"].includes(memberships[0]?.role || "")) return Response.json({ error: "Owner, admin, or developer access is required to create projects." }, { status: 403 });
   const projectResponse = await fetch(`${config.url}/rest/v1/projects`, {
     method: "POST", headers: headers(config.serviceKey, "return=representation"),
     body: JSON.stringify({ owner_id: actor.id, organization_id: organizationId, name, domain, environment }), cache: "no-store",
