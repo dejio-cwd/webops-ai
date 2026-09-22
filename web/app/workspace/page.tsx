@@ -54,7 +54,7 @@ export default function WorkspacePage() {
   useEffect(() => { function onKeyDown(event: KeyboardEvent) { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); setPaletteOpen((open) => !open); } if (event.key === "Escape") setPaletteOpen(false); } window.addEventListener("keydown", onKeyDown); return () => window.removeEventListener("keydown", onKeyDown); }, []);
 
   const activeProject = projects.find((project) => project.id === activeProjectId) || projects[0];
-  const projectTarget = activeProject ? "/?url=" + encodeURIComponent("https://" + activeProject.domain) : "/onboarding";
+  const projectTarget = activeProject ? "/audit?url=" + encodeURIComponent("https://" + activeProject.domain) : "/onboarding";
   function clearMessages() { setError(""); setNotice(""); }
   function toggleTheme() { const next = theme === "dark" ? "light" : "dark"; setTheme(next); window.localStorage.setItem("webops-theme", next); }
   async function signOut() { await fetch("/api/auth/logout", { method: "POST" }); router.replace("/sign-in"); router.refresh(); }
