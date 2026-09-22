@@ -2,6 +2,16 @@ begin;
 
 create extension if not exists pgcrypto;
 
+-- Fresh Supabase projects do not yet have the original scaffold tables.
+-- Create the required project table first so this migration is standalone.
+create table if not exists public.projects (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  name text not null,
+  domain text not null,
+  created_at timestamptz not null default now()
+);
+
 create table if not exists public.organizations (
   id uuid primary key default gen_random_uuid(),
   name text not null,
@@ -70,12 +80,26 @@ create or replace function public.has_org_role(org_id uuid, allowed text[])
 returns boolean language sql stable security definer set search_path = public
 as $$ select exists(select 1 from public.organization_members m where m.organization_id = org_id and m.user_id = auth.uid() and m.role = any(allowed)); $$;
 
+alter table public.projects enable row level security;
 alter table public.organizations enable row level security;
 alter table public.organization_members enable row level security;
 alter table public.domain_verifications enable row level security;
 alter table public.audit_events enable row level security;
 alter table public.provider_credentials enable row level security;
 
+drop policy if exists "owners manage projects" on public.projects;
+drop policy if exists "members read organizations" on public.organizations;
+drop policy if exists "owners update organizations" on public.organizations;
+drop policy if exists "members read membership" on public.organization_members;
+drop policy if exists "admins manage membership" on public.organization_members;
+drop policy if exists "members read domain verification" on public.domain_verifications;
+drop policy if exists "admins manage domain verification" on public.domain_verifications;
+drop policy if exists "members read audit events" on public.audit_events;
+drop policy if exists "admins manage credentials" on public.provider_credentials;
+
+create policy "owners manage projects" on public.projects for all
+  using (owner_id = auth.uid() or public.is_org_member(organization_id))
+  with check (owner_id = auth.uid() and (organization_id is null or public.is_org_member(organization_id)));
 create policy "members read organizations" on public.organizations for select using (public.is_org_member(id));
 create policy "owners update organizations" on public.organizations for update using (public.has_org_role(id, array['owner','admin']));
 create policy "members read membership" on public.organization_members for select using (public.is_org_member(organization_id));
