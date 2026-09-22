@@ -18,6 +18,55 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
+type SupabaseConfig = { url: string; key: string };
+function supabaseConfig(): SupabaseConfig | null {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  return url && key ? { url: url.replace(/\/$/, ""), key } : null;
+}
+function supabaseHeaders(key: string, prefer?: string) {
+  return {
+    apikey: key,
+    Authorization: `Bearer ${key}`,
+    "Content-Type": "application/json",
+    ...(prefer ? { Prefer: prefer } : {}),
+  };
+}
+
+export async function GET(request: Request) {
+  const actor = await guardApiRequest(request, {
+    bucket: "audit-history-read",
+    limit: 60,
+    requireAuth: true,
+  });
+  if (isGuardResponse(actor)) return actor;
+  if (!actor)
+    return Response.json(
+      { error: "Authentication required." },
+      { status: 401 },
+    );
+  const config = supabaseConfig();
+  if (!config)
+    return Response.json(
+      { runs: [] },
+      { headers: { "Cache-Control": "no-store" } },
+    );
+  const endpoint = `${config.url}/rest/v1/audit_runs?select=id,url,audit_id,engine_version,status,summary,created_at,completed_at&owner_id=eq.${encodeURIComponent(actor.id)}&order=created_at.desc&limit=20`;
+  const response = await fetch(endpoint, {
+    headers: supabaseHeaders(config.key),
+    cache: "no-store",
+  });
+  if (!response.ok)
+    return Response.json(
+      { error: "Unable to load audit history." },
+      { status: 502 },
+    );
+  return Response.json(
+    { runs: await response.json() },
+    { headers: { "Cache-Control": "no-store" } },
+  );
+}
+
 export async function POST(request: Request) {
   const actor = await guardApiRequest(request, {
     bucket: "audit-run",
@@ -65,6 +114,29 @@ export async function POST(request: Request) {
       checkExternalLinks: body.checkExternalLinks ?? true,
       deadlineMs: 50000,
     });
+    const config = supabaseConfig();
+    if (config) {
+      await fetch(`${config.url}/rest/v1/audit_runs`, {
+        method: "POST",
+        headers: supabaseHeaders(config.key),
+        body: JSON.stringify({
+          owner_id: actor.id,
+          url: withScheme,
+          audit_id: result.auditId,
+          engine_version: result.version,
+          status: result.crawl.truncated ? "truncated" : "completed",
+          summary: {
+            pagesCrawled: result.crawl.pagesCrawled,
+            findings: result.findings.length,
+            opportunities: result.opportunities.length,
+            healthScore: result.health.overall,
+          },
+          result,
+          completed_at: new Date().toISOString(),
+        }),
+        cache: "no-store",
+      }).catch(() => null);
+    }
     return Response.json(result, { headers: { "Cache-Control": "no-store" } });
   } catch (err) {
     const status = err instanceof SsrfError ? 400 : 500;
