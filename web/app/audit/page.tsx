@@ -1049,6 +1049,7 @@ function FixCenter({
   const [filter, setFilter] = useState<"all" | "draft" | "ready" | "verified">(
     "all",
   );
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   useEffect(() => {
     fetch(`/api/fixes?auditId=${encodeURIComponent(audit.auditId)}`, {
       cache: "no-store",
@@ -1069,6 +1070,38 @@ function FixCenter({
       })
       .catch(() => null);
   }, [audit.auditId]);
+  const bulkAdvance = async () => {
+    const targets = audit.opportunities.filter((opp) =>
+      selectedIds.includes(opp.id),
+    );
+    await Promise.all(
+      targets.map(async (opp) => {
+        const current = states[opp.id] || "draft";
+        const next =
+          current === "draft"
+            ? "ready"
+            : current === "ready"
+              ? "verified"
+              : current;
+        if (next === current) return;
+        setStates((value) => ({ ...value, [opp.id]: next }));
+        await fetch("/api/fixes", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            auditId: audit.auditId,
+            projectId: projectId || undefined,
+            opportunityId: opp.id,
+            title: opp.title,
+            status: next,
+            evidence: opp.sampleEvidence,
+            recommendation: opp.recommendation,
+          }),
+        });
+      }),
+    );
+    setSelectedIds([]);
+  };
   const [playbooks, setPlaybooks] = useState<Record<string, string>>({});
   const [generating, setGenerating] = useState<string | null>(null);
   const generatePlaybook = async (opp: Opportunity) => {
@@ -1132,6 +1165,22 @@ function FixCenter({
           Evidence-backed resolution queue. Move a recommendation through draft,
           ready for approval, and verified only after validation.
         </p>
+        <div className="actions">
+          <button
+            className="btn sm"
+            onClick={() => void bulkAdvance()}
+            disabled={!selectedIds.length}
+          >
+            Advance selected ({selectedIds.length})
+          </button>
+          <button
+            className="btn ghost sm"
+            onClick={() => setSelectedIds([])}
+            disabled={!selectedIds.length}
+          >
+            Clear selection
+          </button>
+        </div>
       </div>
       {audit.opportunities
         .filter(
@@ -1170,6 +1219,18 @@ function FixCenter({
           return (
             <div className="opp" key={opp.id}>
               <div className="opp-head">
+                <input
+                  type="checkbox"
+                  aria-label={`Select ${opp.title}`}
+                  checked={selectedIds.includes(opp.id)}
+                  onChange={(event) =>
+                    setSelectedIds((ids) =>
+                      event.target.checked
+                        ? [...ids, opp.id]
+                        : ids.filter((id) => id !== opp.id),
+                    )
+                  }
+                />
                 <div style={{ flex: 1 }}>
                   <h4>{opp.title}</h4>
                   <div className="meta">
