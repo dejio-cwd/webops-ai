@@ -2,7 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CATEGORY_LABELS } from "@/lib/types";
-import type { AuditResult, Opportunity, Finding, PageEvidence, Severity } from "@/lib/types";
+import type {
+  AuditResult,
+  Opportunity,
+  Finding,
+  PageEvidence,
+  Severity,
+} from "@/lib/types";
 import type { PageSpeedResult } from "@/lib/pagespeed";
 import {
   loadSettings,
@@ -46,6 +52,16 @@ function scoreColor(n: number) {
 }
 
 type Credential = ReturnType<typeof toCredential>;
+type AuditRunSummary = {
+  id: string;
+  url: string;
+  audit_id: string;
+  engine_version: string;
+  status: string;
+  summary: { pagesCrawled?: number; healthScore?: number };
+  created_at: string;
+  completed_at: string | null;
+};
 
 export default function Home() {
   const [active, setActive] = useState<Module>("Overview");
@@ -54,10 +70,14 @@ export default function Home() {
   const [running, setRunning] = useState(false);
   const [audit, setAudit] = useState<AuditResult | null>(null);
   const [error, setError] = useState("");
+  const [history, setHistory] = useState<AuditRunSummary[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   const [settings, setSettings] = useState<AiSettings>(loadSettings());
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<"connections" | "crawl">("connections");
+  const [settingsTab, setSettingsTab] = useState<"connections" | "crawl">(
+    "connections",
+  );
 
   // Hydrate from localStorage after mount (SSR-safe: loadSettings() returns
   // identical defaults on server and first client render, so no mismatch).
@@ -69,12 +89,29 @@ export default function Home() {
     setMaxPages(loaded.crawlDefaults.maxPages);
   }, []);
 
+  const loadHistory = useCallback(async () => {
+    setHistoryLoading(true);
+    try {
+      const res = await fetch("/api/audit", { cache: "no-store" });
+      if (!res.ok) return;
+      const data = await res.json();
+      setHistory((data.runs || []) as AuditRunSummary[]);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadHistory();
+  }, [loadHistory]);
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const requestedUrl = params.get("url");
     const requestedModule = params.get("module") as Module | null;
     if (requestedUrl) setUrl(requestedUrl);
-    if (requestedModule && MODULES.includes(requestedModule)) setActive(requestedModule);
+    if (requestedModule && MODULES.includes(requestedModule))
+      setActive(requestedModule);
   }, []);
 
   const persistSettings = useCallback((next: AiSettings) => {
@@ -87,7 +124,11 @@ export default function Home() {
     setSettingsOpen(true);
   }, []);
 
-  const getCredential = useCallback((task: AiTask): Credential => toCredential(connectionForTask(settings, task)), [settings]);
+  const getCredential = useCallback(
+    (task: AiTask): Credential =>
+      toCredential(connectionForTask(settings, task)),
+    [settings],
+  );
 
   const runAudit = useCallback(async () => {
     if (!url.trim()) {
@@ -113,12 +154,29 @@ export default function Home() {
       if (!res.ok) throw new Error(data?.error || "Audit failed.");
       setAudit(data as AuditResult);
       setActive("Overview");
+      void loadHistory();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Audit failed.");
     } finally {
       setRunning(false);
     }
-  }, [url, maxPages, settings.crawlDefaults]);
+  }, [url, maxPages, settings.crawlDefaults, loadHistory]);
+
+  const loadHistoricalAudit = useCallback(async (auditId: string) => {
+    setError("");
+    const res = await fetch(
+      `/api/audit?auditId=${encodeURIComponent(auditId)}`,
+      { cache: "no-store" },
+    );
+    const data = await res.json();
+    if (!res.ok) {
+      setError(data?.error || "Unable to load audit.");
+      return;
+    }
+    setAudit(data.audit as AuditResult);
+    setUrl(data.audit.crawl.requestedUrl);
+    setActive("Overview");
+  }, []);
 
   const findingCount = audit?.findings.length ?? 0;
   const oppCount = audit?.opportunities.length ?? 0;
@@ -142,23 +200,41 @@ export default function Home() {
         <div className="nav-label">Platform</div>
         <nav className="nav">
           {MODULES.map((m) => (
-            <button key={m} className={active === m ? "active" : ""} onClick={() => setActive(m)}>
+            <button
+              key={m}
+              className={active === m ? "active" : ""}
+              onClick={() => setActive(m)}
+            >
               <span>{m}</span>
-              {counts[m] !== undefined && <span className={`pill ${counts[m] ? "" : "zero"}`}>{counts[m]}</span>}
+              {counts[m] !== undefined && (
+                <span className={`pill ${counts[m] ? "" : "zero"}`}>
+                  {counts[m]}
+                </span>
+              )}
             </button>
           ))}
         </nav>
-        <div className="nav-label" style={{ marginTop: 20 }}>Model</div>
+        <div className="nav-label" style={{ marginTop: 20 }}>
+          Model
+        </div>
         <div style={{ padding: "0 6px" }}>
           <div className="chip">Find → Explain → Prioritize → Fix → Verify</div>
         </div>
         <div className="sidebar-footer">
-          <a className="sidebar-btn" href="/workspace"><span>←</span><span>Command Center</span></a>
-          <button className="sidebar-btn" onClick={() => openSettings("connections")}>
-            <span>⚙</span><span>AI connections &amp; BYOK</span>
+          <a className="sidebar-btn" href="/workspace">
+            <span>←</span>
+            <span>Command Center</span>
+          </a>
+          <button
+            className="sidebar-btn"
+            onClick={() => openSettings("connections")}
+          >
+            <span>⚙</span>
+            <span>AI connections &amp; BYOK</span>
           </button>
           <button className="sidebar-btn" onClick={() => openSettings("crawl")}>
-            <span>⛭</span><span>Crawl settings</span>
+            <span>⛭</span>
+            <span>Crawl settings</span>
           </button>
         </div>
       </aside>
@@ -176,7 +252,8 @@ export default function Home() {
           </div>
           {audit && (
             <div className="chip">
-              engine v{audit.version} · {new Date(audit.capturedAt).toLocaleString()}
+              engine v{audit.version} ·{" "}
+              {new Date(audit.capturedAt).toLocaleString()}
             </div>
           )}
         </div>
@@ -201,12 +278,27 @@ export default function Home() {
                 min={1}
                 max={CRAWL_LIMITS.maxPages}
                 value={maxPages}
-                onChange={(e) => setMaxPages(Math.max(1, Math.min(CRAWL_LIMITS.maxPages, Number(e.target.value) || 1)))}
+                onChange={(e) =>
+                  setMaxPages(
+                    Math.max(
+                      1,
+                      Math.min(
+                        CRAWL_LIMITS.maxPages,
+                        Number(e.target.value) || 1,
+                      ),
+                    ),
+                  )
+                }
                 style={{ width: 84 }}
               />
               <div style={{ display: "flex", gap: 4 }}>
                 {PAGE_PRESETS.map((p) => (
-                  <button key={p} className="chip" style={{ cursor: "pointer", border: 0 }} onClick={() => setMaxPages(p)}>
+                  <button
+                    key={p}
+                    className="chip"
+                    style={{ cursor: "pointer", border: 0 }}
+                    onClick={() => setMaxPages(p)}
+                  >
                     {p}
                   </button>
                 ))}
@@ -216,32 +308,76 @@ export default function Home() {
           <div className="field">
             <label>&nbsp;</label>
             <button className="btn" onClick={runAudit} disabled={running}>
-              {running ? <><span className="spinner" />Crawling…</> : "Run audit"}
+              {running ? (
+                <>
+                  <span className="spinner" />
+                  Crawling…
+                </>
+              ) : (
+                "Run audit"
+              )}
             </button>
           </div>
           <div className="field">
             <label>&nbsp;</label>
-            <button className="icon-btn" title="Advanced crawl settings" onClick={() => openSettings("crawl")}>⚙</button>
+            <button
+              className="icon-btn"
+              title="Advanced crawl settings"
+              onClick={() => openSettings("crawl")}
+            >
+              ⚙
+            </button>
           </div>
         </div>
 
-        {error && <div className="notice bad" style={{ marginBottom: 16 }}>{error}</div>}
-
-        {!audit && !running && <Welcome />}
-        {running && !audit && (
-          <div className="empty">
-            <span className="spinner" /> Crawling up to {maxPages} page{maxPages === 1 ? "" : "s"}, running the rules engine, and scoring…
+        {error && (
+          <div className="notice bad" style={{ marginBottom: 16 }}>
+            {error}
           </div>
         )}
 
-        {audit && active === "Overview" && <Overview audit={audit} onJump={setActive} credential={getCredential("summary")} />}
-        {audit && active === "Opportunities" && <Opportunities audit={audit} explainCred={getCredential("explain")} fixCred={getCredential("fix")} />}
+        {!audit && !running && <Welcome />}
+        {!audit && !running && (
+          <AuditHistory
+            runs={history}
+            loading={historyLoading}
+            onRefresh={loadHistory}
+            onOpen={loadHistoricalAudit}
+          />
+        )}
+        {running && !audit && (
+          <div className="empty">
+            <span className="spinner" /> Crawling up to {maxPages} page
+            {maxPages === 1 ? "" : "s"}, running the rules engine, and scoring…
+          </div>
+        )}
+
+        {audit && active === "Overview" && (
+          <Overview
+            audit={audit}
+            onJump={setActive}
+            credential={getCredential("summary")}
+          />
+        )}
+        {audit && active === "Opportunities" && (
+          <Opportunities
+            audit={audit}
+            explainCred={getCredential("explain")}
+            fixCred={getCredential("fix")}
+          />
+        )}
         {audit && active === "Findings" && <Findings audit={audit} />}
         {audit && active === "Crawl" && <Crawl audit={audit} />}
-        {audit && active === "Performance" && <Performance origin={audit.crawl.requestedUrl} />}
+        {audit && active === "Performance" && (
+          <Performance origin={audit.crawl.requestedUrl} />
+        )}
         {audit && active === "Links & Images" && <LinksImages audit={audit} />}
         {active === "AI Studio" && (
-          <AiStudio settings={settings} onOpenSettings={openSettings} audit={audit} />
+          <AiStudio
+            settings={settings}
+            onOpenSettings={openSettings}
+            audit={audit}
+          />
         )}
         {active === "Roadmap" && <Roadmap />}
       </main>
@@ -260,32 +396,114 @@ export default function Home() {
 
 /* ------------------------------------------------------------------ */
 
+function AuditHistory({
+  runs,
+  loading,
+  onRefresh,
+  onOpen,
+}: {
+  runs: AuditRunSummary[];
+  loading: boolean;
+  onRefresh: () => void;
+  onOpen: (auditId: string) => void;
+}) {
+  return (
+    <div className="card" style={{ marginTop: 16 }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 12,
+        }}
+      >
+        <div>
+          <h3>Recent audit history</h3>
+          <div className="sub">
+            Stored evidence from your authenticated audit runs.
+          </div>
+        </div>
+        <button className="btn ghost sm" onClick={onRefresh} disabled={loading}>
+          {loading ? "Loading…" : "Refresh"}
+        </button>
+      </div>
+      {!runs.length && !loading && (
+        <div className="empty" style={{ marginTop: 12 }}>
+          No stored audits yet. Run an audit to create the first evidence
+          record.
+        </div>
+      )}
+      {runs.map((run) => (
+        <button
+          key={run.id}
+          className="history-row"
+          onClick={() => onOpen(run.audit_id)}
+          style={{
+            display: "flex",
+            width: "100%",
+            justifyContent: "space-between",
+            textAlign: "left",
+            gap: 12,
+            marginTop: 10,
+            padding: 12,
+            borderRadius: 10,
+            border: "1px solid var(--line)",
+            background: "transparent",
+            color: "inherit",
+            cursor: "pointer",
+          }}
+        >
+          <span>
+            <b>{run.url}</b>
+            <small
+              style={{ display: "block", color: "var(--muted)", marginTop: 4 }}
+            >
+              {new Date(run.created_at).toLocaleString()} · {run.status}
+            </small>
+          </span>
+          <span style={{ whiteSpace: "nowrap", color: "var(--muted)" }}>
+            {run.summary.pagesCrawled ?? 0} pages · score{" "}
+            {run.summary.healthScore ?? "—"}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function Welcome() {
   return (
     <div className="card" style={{ padding: "26px 24px" }}>
       <h3 style={{ fontSize: 18 }}>Audit any public website in one pass</h3>
       <p className="muted" style={{ maxWidth: 640, marginTop: 6 }}>
-        WebOps AI crawls the site, captures verifiable evidence for every page, runs a deterministic
-        rules engine across SEO, indexability, content, links, images, structured data, accessibility
-        and security, then rolls everything up into prioritized opportunities. Add a PageSpeed key for
-        real Core Web Vitals, and configure an AI connection (BYOK, any provider) for evidence-grounded
-        fix playbooks and the Mule assistant.
+        WebOps AI crawls the site, captures verifiable evidence for every page,
+        runs a deterministic rules engine across SEO, indexability, content,
+        links, images, structured data, accessibility and security, then rolls
+        everything up into prioritized opportunities. Add a PageSpeed key for
+        real Core Web Vitals, and configure an AI connection (BYOK, any
+        provider) for evidence-grounded fix playbooks and the Mule assistant.
       </p>
       <div className="grid cols-4" style={{ marginTop: 18 }}>
         {[
-          ["Real crawler", "BFS, robots.txt, sitemap, configurable depth & page limits"],
+          [
+            "Real crawler",
+            "BFS, robots.txt, sitemap, configurable depth & page limits",
+          ],
           ["40+ rules", "Deterministic, reproducible, explained"],
           ["Core Web Vitals", "Lighthouse via Google, no local Chrome"],
           ["AI copilot + Mule", "Any provider, BYOK, grounded in evidence"],
         ].map(([t, s]) => (
           <div className="metric" key={t}>
             <div className="metric-label">{t}</div>
-            <div className="metric-note" style={{ marginTop: 8 }}>{s}</div>
+            <div className="metric-note" style={{ marginTop: 8 }}>
+              {s}
+            </div>
           </div>
         ))}
       </div>
       <p className="muted" style={{ marginTop: 16, fontSize: 12.5 }}>
-        Enter a URL above and press <b>Run audit</b>. Try <code>vercel.com</code> or your own site.
+        Enter a URL above and press <b>Run audit</b>. Try{" "}
+        <code>vercel.com</code> or your own site.
       </p>
     </div>
   );
@@ -299,10 +517,24 @@ function Ring({ score, grade }: { score: number; grade: string }) {
   return (
     <div className="ring">
       <svg width="132" height="132" viewBox="0 0 132 132">
-        <circle cx="66" cy="66" r={r} fill="none" stroke="var(--bg-2)" strokeWidth="12" />
         <circle
-          cx="66" cy="66" r={r} fill="none" stroke={col} strokeWidth="12" strokeLinecap="round"
-          strokeDasharray={c} strokeDashoffset={off}
+          cx="66"
+          cy="66"
+          r={r}
+          fill="none"
+          stroke="var(--bg-2)"
+          strokeWidth="12"
+        />
+        <circle
+          cx="66"
+          cy="66"
+          r={r}
+          fill="none"
+          stroke={col}
+          strokeWidth="12"
+          strokeLinecap="round"
+          strokeDasharray={c}
+          strokeDashoffset={off}
         />
       </svg>
       <div className="val">
@@ -313,7 +545,15 @@ function Ring({ score, grade }: { score: number; grade: string }) {
   );
 }
 
-function Overview({ audit, onJump, credential }: { audit: AuditResult; onJump: (m: Module) => void; credential: Credential }) {
+function Overview({
+  audit,
+  onJump,
+  credential,
+}: {
+  audit: AuditResult;
+  onJump: (m: Module) => void;
+  credential: Credential;
+}) {
   const { health, crawl, opportunities } = audit;
   const cats = Object.entries(health.categories) as [string, number][];
   const sevCounts = audit.findingCountsBySeverity;
@@ -336,7 +576,11 @@ function Overview({ audit, onJump, credential }: { audit: AuditResult; onJump: (
             url: crawl.origin,
             health,
             crawl,
-            topFindings: audit.findings.slice(0, 15).map((f) => ({ title: f.title, severity: f.severity, url: f.url })),
+            topFindings: audit.findings.slice(0, 15).map((f) => ({
+              title: f.title,
+              severity: f.severity,
+              url: f.url,
+            })),
           },
         }),
       });
@@ -358,13 +602,25 @@ function Overview({ audit, onJump, credential }: { audit: AuditResult; onJump: (
             <Ring score={health.overall} grade={health.grade} />
             <div style={{ flex: 1 }}>
               <h3>Overall health</h3>
-              <div className="sub">Importance-weighted across evaluated categories</div>
+              <div className="sub">
+                Importance-weighted across evaluated categories
+              </div>
               {cats
                 .sort((a, b) => a[1] - b[1])
                 .map(([cat, score]) => (
                   <div className="cat-row" key={cat}>
-                    <span className="name">{CATEGORY_LABELS[cat as keyof typeof CATEGORY_LABELS] || cat}</span>
-                    <span className="bar"><span style={{ width: `${score}%`, background: scoreColor(score) }} /></span>
+                    <span className="name">
+                      {CATEGORY_LABELS[cat as keyof typeof CATEGORY_LABELS] ||
+                        cat}
+                    </span>
+                    <span className="bar">
+                      <span
+                        style={{
+                          width: `${score}%`,
+                          background: scoreColor(score),
+                        }}
+                      />
+                    </span>
                     <span className="num">{score}</span>
                   </div>
                 ))}
@@ -373,15 +629,28 @@ function Overview({ audit, onJump, credential }: { audit: AuditResult; onJump: (
         </div>
         <div className="card">
           <h3>Findings by severity</h3>
-          <div className="sub">{audit.findings.length} findings across {crawl.pagesCrawled} pages</div>
+          <div className="sub">
+            {audit.findings.length} findings across {crawl.pagesCrawled} pages
+          </div>
           {SEV_ORDER.map((s) => (
             <div className="cat-row" key={s}>
-              <span className="name"><span className={sevClass(s)}>{s}</span></span>
+              <span className="name">
+                <span className={sevClass(s)}>{s}</span>
+              </span>
               <span className="bar">
                 <span
                   style={{
                     width: `${audit.findings.length ? ((sevCounts[s] || 0) / audit.findings.length) * 100 : 0}%`,
-                    background: s === "critical" ? "var(--crit)" : s === "high" ? "var(--bad)" : s === "medium" ? "var(--warn)" : s === "low" ? "#7fb8ff" : "var(--text-faint)",
+                    background:
+                      s === "critical"
+                        ? "var(--crit)"
+                        : s === "high"
+                          ? "var(--bad)"
+                          : s === "medium"
+                            ? "var(--warn)"
+                            : s === "low"
+                              ? "#7fb8ff"
+                              : "var(--text-faint)",
                   }}
                 />
               </span>
@@ -389,34 +658,68 @@ function Overview({ audit, onJump, credential }: { audit: AuditResult; onJump: (
             </div>
           ))}
           <div style={{ marginTop: 14 }}>
-            <button className="btn ghost sm" onClick={() => onJump("Opportunities")}>View opportunities →</button>
+            <button
+              className="btn ghost sm"
+              onClick={() => onJump("Opportunities")}
+            >
+              View opportunities →
+            </button>
           </div>
         </div>
       </div>
 
       <div className="section-title">Crawl summary</div>
       <div className="grid cols-4">
-        <Metric label="Pages crawled" value={String(crawl.pagesCrawled)} note={`${crawl.pagesRequested} requested${crawl.truncated ? " · truncated" : ""}`} />
-        <Metric label="Duration" value={`${(crawl.durationMs / 1000).toFixed(1)}s`} note={`depth ≤ ${crawl.maxDepth} · cap ${crawl.maxPages}`} />
-        <Metric label="Broken links" value={String(crawl.brokenLinks.length)} note="internal + external" />
+        <Metric
+          label="Pages crawled"
+          value={String(crawl.pagesCrawled)}
+          note={`${crawl.pagesRequested} requested${crawl.truncated ? " · truncated" : ""}`}
+        />
+        <Metric
+          label="Duration"
+          value={`${(crawl.durationMs / 1000).toFixed(1)}s`}
+          note={`depth ≤ ${crawl.maxDepth} · cap ${crawl.maxPages}`}
+        />
+        <Metric
+          label="Broken links"
+          value={String(crawl.brokenLinks.length)}
+          note="internal + external"
+        />
         <Metric
           label="robots / sitemap"
           value={`${crawl.robotsFound ? "✓" : "✗"} / ${crawl.sitemapFound ? "✓" : "✗"}`}
-          note={crawl.fromSitemap ? `${crawl.fromSitemap} URLs from sitemap` : "no sitemap URLs"}
+          note={
+            crawl.fromSitemap
+              ? `${crawl.fromSitemap} URLs from sitemap`
+              : "no sitemap URLs"
+          }
         />
       </div>
 
       <div className="section-title">AI executive summary</div>
       <div className="card">
         {!summary && !loadingSummary && (
-          <button className="btn sm" onClick={genSummary}>Generate AI summary</button>
+          <button className="btn sm" onClick={genSummary}>
+            Generate AI summary
+          </button>
         )}
-        {loadingSummary && <div className="muted"><span className="spinner" />Writing summary…</div>}
+        {loadingSummary && (
+          <div className="muted">
+            <span className="spinner" />
+            Writing summary…
+          </div>
+        )}
         {summaryErr && <div className="notice bad">{summaryErr}</div>}
         {summary && (
           <>
             <div className="ai-out">{summary}</div>
-            <button className="btn ghost sm" style={{ marginTop: 10 }} onClick={genSummary}>Regenerate</button>
+            <button
+              className="btn ghost sm"
+              style={{ marginTop: 10 }}
+              onClick={genSummary}
+            >
+              Regenerate
+            </button>
           </>
         )}
       </div>
@@ -426,7 +729,10 @@ function Overview({ audit, onJump, credential }: { audit: AuditResult; onJump: (
         <OppCard key={o.id} opp={o} compact />
       ))}
       {opportunities.length > 3 && (
-        <button className="btn ghost sm" onClick={() => onJump("Opportunities")}>
+        <button
+          className="btn ghost sm"
+          onClick={() => onJump("Opportunities")}
+        >
           See all {opportunities.length} opportunities →
         </button>
       )}
@@ -434,7 +740,15 @@ function Overview({ audit, onJump, credential }: { audit: AuditResult; onJump: (
   );
 }
 
-function Metric({ label, value, note }: { label: string; value: string; note: string }) {
+function Metric({
+  label,
+  value,
+  note,
+}: {
+  label: string;
+  value: string;
+  note: string;
+}) {
   return (
     <div className="metric">
       <div className="metric-label">{label}</div>
@@ -446,24 +760,52 @@ function Metric({ label, value, note }: { label: string; value: string; note: st
 
 /* ------- Opportunities + AI ------- */
 
-function Opportunities({ audit, explainCred, fixCred }: { audit: AuditResult; explainCred: Credential; fixCred: Credential }) {
+function Opportunities({
+  audit,
+  explainCred,
+  fixCred,
+}: {
+  audit: AuditResult;
+  explainCred: Credential;
+  fixCred: Credential;
+}) {
   if (!audit.opportunities.length)
-    return <div className="empty">No opportunities — the rules engine found nothing to fix. 🎉</div>;
+    return (
+      <div className="empty">
+        No opportunities — the rules engine found nothing to fix. 🎉
+      </div>
+    );
   return (
     <>
       <p className="muted" style={{ marginBottom: 14 }}>
-        {audit.opportunities.length} prioritized actions. Score = severity × scope × ease. Use the AI
-        buttons to generate an evidence-grounded explanation or a step-by-step fix playbook, powered by
-        whichever connection you set as default (or routed) in AI Studio.
+        {audit.opportunities.length} prioritized actions. Score = severity ×
+        scope × ease. Use the AI buttons to generate an evidence-grounded
+        explanation or a step-by-step fix playbook, powered by whichever
+        connection you set as default (or routed) in AI Studio.
       </p>
       {audit.opportunities.map((o) => (
-        <OppCard key={o.id} opp={o} explainCred={explainCred} fixCred={fixCred} />
+        <OppCard
+          key={o.id}
+          opp={o}
+          explainCred={explainCred}
+          fixCred={fixCred}
+        />
       ))}
     </>
   );
 }
 
-function OppCard({ opp, compact, explainCred, fixCred }: { opp: Opportunity; compact?: boolean; explainCred?: Credential; fixCred?: Credential }) {
+function OppCard({
+  opp,
+  compact,
+  explainCred,
+  fixCred,
+}: {
+  opp: Opportunity;
+  compact?: boolean;
+  explainCred?: Credential;
+  fixCred?: Credential;
+}) {
   const [out, setOut] = useState("");
   const [loading, setLoading] = useState<"" | "explain" | "fix">("");
   const [err, setErr] = useState("");
@@ -476,7 +818,11 @@ function OppCard({ opp, compact, explainCred, fixCred }: { opp: Opportunity; com
       const res = await fetch("/api/ai", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode, opportunity: opp, credential: mode === "fix" ? fixCred : explainCred }),
+        body: JSON.stringify({
+          mode,
+          opportunity: opp,
+          credential: mode === "fix" ? fixCred : explainCred,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "AI request failed.");
@@ -496,14 +842,23 @@ function OppCard({ opp, compact, explainCred, fixCred }: { opp: Opportunity; com
           <div className="meta">
             <span className={sevClass(opp.severity)}>{opp.severity}</span>
             <span className="chip">{CATEGORY_LABELS[opp.category]}</span>
-            <span className="chip">{opp.affectedCount} page{opp.affectedCount === 1 ? "" : "s"}</span>
+            <span className="chip">
+              {opp.affectedCount} page{opp.affectedCount === 1 ? "" : "s"}
+            </span>
             <span className="chip">effort: {opp.effort}</span>
             <span className="chip">confidence: {opp.confidence}</span>
           </div>
-          <p><b>Why:</b> {opp.why}</p>
-          <p><b>Fix:</b> {opp.recommendation}</p>
+          <p>
+            <b>Why:</b> {opp.why}
+          </p>
+          <p>
+            <b>Fix:</b> {opp.recommendation}
+          </p>
           {!compact && opp.sampleEvidence.length > 0 && (
-            <p className="muted" style={{ fontFamily: "var(--mono)", fontSize: 11.5 }}>
+            <p
+              className="muted"
+              style={{ fontFamily: "var(--mono)", fontSize: 11.5 }}
+            >
               {opp.sampleEvidence.slice(0, 2).join("  ·  ")}
             </p>
           )}
@@ -515,15 +870,41 @@ function OppCard({ opp, compact, explainCred, fixCred }: { opp: Opportunity; com
       </div>
       {!compact && (
         <div className="actions">
-          <button className="btn sm" onClick={() => ask("explain")} disabled={!!loading}>
-            {loading === "explain" ? <><span className="spinner" />Explaining…</> : "Explain with AI"}
+          <button
+            className="btn sm"
+            onClick={() => ask("explain")}
+            disabled={!!loading}
+          >
+            {loading === "explain" ? (
+              <>
+                <span className="spinner" />
+                Explaining…
+              </>
+            ) : (
+              "Explain with AI"
+            )}
           </button>
-          <button className="btn ghost sm" onClick={() => ask("fix")} disabled={!!loading}>
-            {loading === "fix" ? <><span className="spinner" />Generating…</> : "Generate fix playbook"}
+          <button
+            className="btn ghost sm"
+            onClick={() => ask("fix")}
+            disabled={!!loading}
+          >
+            {loading === "fix" ? (
+              <>
+                <span className="spinner" />
+                Generating…
+              </>
+            ) : (
+              "Generate fix playbook"
+            )}
           </button>
         </div>
       )}
-      {err && <div className="notice bad" style={{ marginTop: 10 }}>{err}</div>}
+      {err && (
+        <div className="notice bad" style={{ marginTop: 10 }}>
+          {err}
+        </div>
+      )}
       {out && <div className="ai-out">{out}</div>}
     </div>
   );
@@ -536,13 +917,21 @@ function Findings({ audit }: { audit: AuditResult }) {
   const cats = ["all", ...Object.keys(audit.findingCountsByCategory)];
   const shown = audit.findings
     .filter((f) => cat === "all" || f.category === cat)
-    .sort((a, b) => SEV_ORDER.indexOf(a.severity) - SEV_ORDER.indexOf(b.severity));
+    .sort(
+      (a, b) => SEV_ORDER.indexOf(a.severity) - SEV_ORDER.indexOf(b.severity),
+    );
   return (
     <>
       <div className="tabbar">
         {cats.map((c) => (
-          <button key={c} className={cat === c ? "active" : ""} onClick={() => setCat(c)}>
-            {c === "all" ? "All" : CATEGORY_LABELS[c as keyof typeof CATEGORY_LABELS] || c}
+          <button
+            key={c}
+            className={cat === c ? "active" : ""}
+            onClick={() => setCat(c)}
+          >
+            {c === "all"
+              ? "All"
+              : CATEGORY_LABELS[c as keyof typeof CATEGORY_LABELS] || c}
             {c !== "all" && ` (${audit.findingCountsByCategory[c]})`}
           </button>
         ))}
@@ -559,16 +948,40 @@ function Findings({ audit }: { audit: AuditResult }) {
 function FindingRow({ f }: { f: Finding }) {
   return (
     <div className="card" style={{ marginBottom: 9, padding: "13px 15px" }}>
-      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+      <div
+        style={{
+          display: "flex",
+          gap: 10,
+          alignItems: "center",
+          flexWrap: "wrap",
+        }}
+      >
         <span className={sevClass(f.severity)}>{f.severity}</span>
         <b style={{ fontSize: 13.5 }}>{f.title}</b>
         <span className="chip">{CATEGORY_LABELS[f.category]}</span>
-        <span className="chip" style={{ fontFamily: "var(--mono)" }}>{f.ruleId}</span>
+        <span className="chip" style={{ fontFamily: "var(--mono)" }}>
+          {f.ruleId}
+        </span>
       </div>
-      <p className="muted" style={{ margin: "7px 0 4px", fontSize: 12.5 }}>{f.detail}</p>
-      <div className="kv"><span>Affected</span><span className="u" style={{ maxWidth: 420 }}>{f.url}</span></div>
+      <p className="muted" style={{ margin: "7px 0 4px", fontSize: 12.5 }}>
+        {f.detail}
+      </p>
+      <div className="kv">
+        <span>Affected</span>
+        <span className="u" style={{ maxWidth: 420 }}>
+          {f.url}
+        </span>
+      </div>
       {f.evidence && (
-        <div className="muted" style={{ fontFamily: "var(--mono)", fontSize: 11, marginTop: 6, whiteSpace: "pre-wrap" }}>
+        <div
+          className="muted"
+          style={{
+            fontFamily: "var(--mono)",
+            fontSize: 11,
+            marginTop: 6,
+            whiteSpace: "pre-wrap",
+          }}
+        >
           {f.evidence.slice(0, 300)}
         </div>
       )}
@@ -583,14 +996,25 @@ function Crawl({ audit }: { audit: AuditResult }) {
     <>
       <div className="grid cols-4" style={{ marginBottom: 18 }}>
         {Object.entries(audit.crawl.statusCounts).map(([k, v]) => (
-          <Metric key={k} label={`HTTP ${k}`} value={String(v)} note="responses" />
+          <Metric
+            key={k}
+            label={`HTTP ${k}`}
+            value={String(v)}
+            note="responses"
+          />
         ))}
       </div>
       <div className="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>Status</th><th>URL</th><th>Title</th><th>Words</th><th>Depth</th><th>Index</th><th>Issues</th>
+              <th>Status</th>
+              <th>URL</th>
+              <th>Title</th>
+              <th>Words</th>
+              <th>Depth</th>
+              <th>Index</th>
+              <th>Issues</th>
             </tr>
           </thead>
           <tbody>
@@ -599,15 +1023,41 @@ function Crawl({ audit }: { audit: AuditResult }) {
                 <td>
                   <span
                     className="status-dot"
-                    style={{ background: p.status >= 400 || p.status === 0 ? "var(--bad)" : p.redirected ? "var(--warn)" : "var(--good)" }}
+                    style={{
+                      background:
+                        p.status >= 400 || p.status === 0
+                          ? "var(--bad)"
+                          : p.redirected
+                            ? "var(--warn)"
+                            : "var(--good)",
+                    }}
                   />
                   {p.status || "ERR"}
                 </td>
-                <td className="u" title={p.url}>{new URL(p.url).pathname || "/"}</td>
-                <td style={{ maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.title || <span className="muted">—</span>}</td>
+                <td className="u" title={p.url}>
+                  {new URL(p.url).pathname || "/"}
+                </td>
+                <td
+                  style={{
+                    maxWidth: 260,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {p.title || <span className="muted">—</span>}
+                </td>
                 <td>{p.wordCount || "—"}</td>
                 <td>{p.depth}</td>
-                <td>{p.indexable ? <span style={{ color: "var(--good)" }}>yes</span> : <span className="muted">{p.indexabilityReason || "no"}</span>}</td>
+                <td>
+                  {p.indexable ? (
+                    <span style={{ color: "var(--good)" }}>yes</span>
+                  ) : (
+                    <span className="muted">
+                      {p.indexabilityReason || "no"}
+                    </span>
+                  )}
+                </td>
                 <td>{p.findings.length}</td>
               </tr>
             ))}
@@ -651,7 +1101,12 @@ function Performance({ origin }: { origin: string }) {
       <div className="runbar">
         <div className="field">
           <label>Strategy</label>
-          <select value={strategy} onChange={(e) => setStrategy(e.target.value as "mobile" | "desktop")}>
+          <select
+            value={strategy}
+            onChange={(e) =>
+              setStrategy(e.target.value as "mobile" | "desktop")
+            }
+          >
             <option value="mobile">Mobile</option>
             <option value="desktop">Desktop</option>
           </select>
@@ -659,23 +1114,45 @@ function Performance({ origin }: { origin: string }) {
         <div className="field">
           <label>&nbsp;</label>
           <button className="btn" onClick={run} disabled={loading}>
-            {loading ? <><span className="spinner" />Measuring…</> : "Measure Core Web Vitals"}
+            {loading ? (
+              <>
+                <span className="spinner" />
+                Measuring…
+              </>
+            ) : (
+              "Measure Core Web Vitals"
+            )}
           </button>
         </div>
         <div className="field" style={{ flex: 1, justifyContent: "flex-end" }}>
           <span className="muted" style={{ fontSize: 12 }}>
-            Powered by Google PageSpeed Insights (Lighthouse). No local Chrome required.
+            Powered by Google PageSpeed Insights (Lighthouse). No local Chrome
+            required.
           </span>
         </div>
       </div>
-      {err && <div className="notice warn" style={{ marginBottom: 14 }}>{err}</div>}
-      {!perf && !loading && <div className="empty">Run a measurement to see real Lighthouse scores and field data.</div>}
+      {err && (
+        <div className="notice warn" style={{ marginBottom: 14 }}>
+          {err}
+        </div>
+      )}
+      {!perf && !loading && (
+        <div className="empty">
+          Run a measurement to see real Lighthouse scores and field data.
+        </div>
+      )}
       {perf && (
         <>
           <div className="grid cols-4">
             <ScoreTile label="Performance" score={perf.scores.performance} />
-            <ScoreTile label="Accessibility" score={perf.scores.accessibility} />
-            <ScoreTile label="Best Practices" score={perf.scores.bestPractices} />
+            <ScoreTile
+              label="Accessibility"
+              score={perf.scores.accessibility}
+            />
+            <ScoreTile
+              label="Best Practices"
+              score={perf.scores.bestPractices}
+            />
             <ScoreTile label="SEO" score={perf.scores.seo} />
           </div>
           <div className="section-title">Lab metrics ({perf.strategy})</div>
@@ -689,7 +1166,9 @@ function Performance({ origin }: { origin: string }) {
           </div>
           {perf.field.hasData && (
             <>
-              <div className="section-title">Field data (real users · CrUX)</div>
+              <div className="section-title">
+                Field data (real users · CrUX)
+              </div>
               <div className="grid cols-4">
                 <FieldTile label="LCP" cat={perf.field.lcp} />
                 <FieldTile label="CLS" cat={perf.field.cls} />
@@ -704,7 +1183,9 @@ function Performance({ origin }: { origin: string }) {
               {perf.opportunities.map((o, i) => (
                 <div className="kv" key={i}>
                   <span>{o.title}</span>
-                  <b>{o.displayValue || `${(o.savingsMs / 1000).toFixed(2)}s`}</b>
+                  <b>
+                    {o.displayValue || `${(o.savingsMs / 1000).toFixed(2)}s`}
+                  </b>
                 </div>
               ))}
             </>
@@ -719,29 +1200,61 @@ function ScoreTile({ label, score }: { label: string; score: number | null }) {
   return (
     <div className="metric">
       <div className="metric-label">{label}</div>
-      <div className="metric-value" style={{ color: score === null ? "var(--text-faint)" : scoreColor(score) }}>
+      <div
+        className="metric-value"
+        style={{
+          color: score === null ? "var(--text-faint)" : scoreColor(score),
+        }}
+      >
         {score === null ? "—" : score}
       </div>
       <div className="metric-note">/ 100</div>
     </div>
   );
 }
-function LabTile({ label, m, unit }: { label: string; m: { displayValue: string | null; score: number | null }; unit: string }) {
+function LabTile({
+  label,
+  m,
+  unit,
+}: {
+  label: string;
+  m: { displayValue: string | null; score: number | null };
+  unit: string;
+}) {
   void unit;
-  const col = m.score === null ? "var(--text-faint)" : m.score >= 0.9 ? "var(--good)" : m.score >= 0.5 ? "var(--warn)" : "var(--bad)";
+  const col =
+    m.score === null
+      ? "var(--text-faint)"
+      : m.score >= 0.9
+        ? "var(--good)"
+        : m.score >= 0.5
+          ? "var(--warn)"
+          : "var(--bad)";
   return (
     <div className="metric">
       <div className="metric-label">{label}</div>
-      <div className="metric-value" style={{ color: col, fontSize: 22 }}>{m.displayValue || "—"}</div>
+      <div className="metric-value" style={{ color: col, fontSize: 22 }}>
+        {m.displayValue || "—"}
+      </div>
     </div>
   );
 }
 function FieldTile({ label, cat }: { label: string; cat: string | null }) {
-  const map: Record<string, string> = { FAST: "var(--good)", AVERAGE: "var(--warn)", SLOW: "var(--bad)" };
+  const map: Record<string, string> = {
+    FAST: "var(--good)",
+    AVERAGE: "var(--warn)",
+    SLOW: "var(--bad)",
+  };
   return (
     <div className="metric">
       <div className="metric-label">{label}</div>
-      <div className="metric-value" style={{ fontSize: 18, color: cat ? map[cat] || "var(--text)" : "var(--text-faint)" }}>
+      <div
+        className="metric-value"
+        style={{
+          fontSize: 18,
+          color: cat ? map[cat] || "var(--text)" : "var(--text-faint)",
+        }}
+      >
         {cat || "—"}
       </div>
     </div>
@@ -752,34 +1265,76 @@ function FieldTile({ label, cat }: { label: string; cat: string | null }) {
 
 function LinksImages({ audit }: { audit: AuditResult }) {
   const broken = audit.crawl.brokenLinks;
-  const imgNoAlt = audit.pages.flatMap((p) => p.images.filter((i) => i.alt === null).map((i) => ({ page: p.url, src: i.src })));
+  const imgNoAlt = audit.pages.flatMap((p) =>
+    p.images
+      .filter((i) => i.alt === null)
+      .map((i) => ({ page: p.url, src: i.src })),
+  );
   const totalImages = audit.pages.reduce((n, p) => n + p.images.length, 0);
   return (
     <>
       <div className="grid cols-4" style={{ marginBottom: 16 }}>
-        <Metric label="Broken links" value={String(broken.length)} note="4xx / 5xx / network" />
-        <Metric label="Images" value={String(totalImages)} note="across crawled pages" />
-        <Metric label="Missing alt" value={String(imgNoAlt.length)} note="accessibility + SEO" />
+        <Metric
+          label="Broken links"
+          value={String(broken.length)}
+          note="4xx / 5xx / network"
+        />
+        <Metric
+          label="Images"
+          value={String(totalImages)}
+          note="across crawled pages"
+        />
+        <Metric
+          label="Missing alt"
+          value={String(imgNoAlt.length)}
+          note="accessibility + SEO"
+        />
         <Metric
           label="External links"
-          value={String(audit.pages.reduce((n, p) => n + p.externalLinkCount, 0))}
+          value={String(
+            audit.pages.reduce((n, p) => n + p.externalLinkCount, 0),
+          )}
           note="outbound"
         />
       </div>
       <div className="section-title">Broken links</div>
       {broken.length === 0 ? (
-        <div className="notice ok">No broken links detected in the sampled set.</div>
+        <div className="notice ok">
+          No broken links detected in the sampled set.
+        </div>
       ) : (
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Status</th><th>Target</th><th>Anchor</th><th>Found on</th></tr></thead>
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Target</th>
+                <th>Anchor</th>
+                <th>Found on</th>
+              </tr>
+            </thead>
             <tbody>
               {broken.slice(0, 100).map((b, i) => (
                 <tr key={i}>
-                  <td><span className="badge sev-high">{b.status || "ERR"}</span></td>
-                  <td className="u" title={b.to}>{b.to}</td>
-                  <td style={{ maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{b.anchor || "—"}</td>
-                  <td className="u" title={b.from}>{new URL(b.from).pathname}</td>
+                  <td>
+                    <span className="badge sev-high">{b.status || "ERR"}</span>
+                  </td>
+                  <td className="u" title={b.to}>
+                    {b.to}
+                  </td>
+                  <td
+                    style={{
+                      maxWidth: 180,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {b.anchor || "—"}
+                  </td>
+                  <td className="u" title={b.from}>
+                    {new URL(b.from).pathname}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -788,16 +1343,27 @@ function LinksImages({ audit }: { audit: AuditResult }) {
       )}
       <div className="section-title">Images missing alt text</div>
       {imgNoAlt.length === 0 ? (
-        <div className="notice ok">Every crawled image has an alt attribute.</div>
+        <div className="notice ok">
+          Every crawled image has an alt attribute.
+        </div>
       ) : (
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Image</th><th>On page</th></tr></thead>
+            <thead>
+              <tr>
+                <th>Image</th>
+                <th>On page</th>
+              </tr>
+            </thead>
             <tbody>
               {imgNoAlt.slice(0, 100).map((im, i) => (
                 <tr key={i}>
-                  <td className="u" title={im.src}>{im.src}</td>
-                  <td className="u" title={im.page}>{new URL(im.page).pathname}</td>
+                  <td className="u" title={im.src}>
+                    {im.src}
+                  </td>
+                  <td className="u" title={im.page}>
+                    {new URL(im.page).pathname}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -813,7 +1379,14 @@ function LinksImages({ audit }: { audit: AuditResult }) {
 interface ModelsResponse {
   configuredProviders: string[];
   hasAnyProvider: boolean;
-  catalog: { id: ProviderId; label: string; needsKey: boolean; hasEnvKey: boolean; defaultModel: string; defaultBaseUrl: string }[];
+  catalog: {
+    id: ProviderId;
+    label: string;
+    needsKey: boolean;
+    hasEnvKey: boolean;
+    defaultModel: string;
+    defaultBaseUrl: string;
+  }[];
   freeModels: { id: string; label: string; contextLength?: number }[];
   freeModelCount: number;
 }
@@ -827,7 +1400,9 @@ function AiStudio({
   onOpenSettings: (tab: "connections" | "crawl") => void;
   audit: AuditResult | null;
 }) {
-  const [tab, setTab] = useState<"overview" | "explorer" | "mule">(settings.connections.length ? "mule" : "overview");
+  const [tab, setTab] = useState<"overview" | "explorer" | "mule">(
+    settings.connections.length ? "mule" : "overview",
+  );
   const [data, setData] = useState<ModelsResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -844,66 +1419,136 @@ function AiStudio({
       <div className="card" style={{ marginBottom: 16 }}>
         <h3>AI Studio</h3>
         <div className="sub">
-          Bring your own key for any provider — OpenRouter, OpenAI, Anthropic, Google, Groq, a custom
-          OpenAI-compatible endpoint, or a local Ollama/LM Studio server. Keys you add here live only in
-          this browser and are sent directly with each request — never stored on our servers.
+          Bring your own key for any provider — OpenRouter, OpenAI, Anthropic,
+          Google, Groq, a custom OpenAI-compatible endpoint, or a local
+          Ollama/LM Studio server. Keys you add here live only in this browser
+          and are sent directly with each request — never stored on our servers.
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button className="btn sm" onClick={() => onOpenSettings("connections")}>+ Add / manage connections</button>
-          <span className="chip">{settings.connections.length} connection{settings.connections.length === 1 ? "" : "s"} saved</span>
-          {data && <span className="chip">{data.configuredProviders.length} provider{data.configuredProviders.length === 1 ? "" : "s"} configured via server env</span>}
+          <button
+            className="btn sm"
+            onClick={() => onOpenSettings("connections")}
+          >
+            + Add / manage connections
+          </button>
+          <span className="chip">
+            {settings.connections.length} connection
+            {settings.connections.length === 1 ? "" : "s"} saved
+          </span>
+          {data && (
+            <span className="chip">
+              {data.configuredProviders.length} provider
+              {data.configuredProviders.length === 1 ? "" : "s"} configured via
+              server env
+            </span>
+          )}
         </div>
       </div>
 
       <div className="tabbar">
-        <button className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}>Providers</button>
-        <button className={tab === "explorer" ? "active" : ""} onClick={() => setTab("explorer")}>Model explorer</button>
-        <button className={tab === "mule" ? "active" : ""} onClick={() => setTab("mule")}>Mule chat</button>
+        <button
+          className={tab === "overview" ? "active" : ""}
+          onClick={() => setTab("overview")}
+        >
+          Providers
+        </button>
+        <button
+          className={tab === "explorer" ? "active" : ""}
+          onClick={() => setTab("explorer")}
+        >
+          Model explorer
+        </button>
+        <button
+          className={tab === "mule" ? "active" : ""}
+          onClick={() => setTab("mule")}
+        >
+          Mule chat
+        </button>
       </div>
 
-      {tab === "overview" && (
-        loading ? (
-          <div className="empty"><span className="spinner" /> Loading provider catalogue…</div>
+      {tab === "overview" &&
+        (loading ? (
+          <div className="empty">
+            <span className="spinner" /> Loading provider catalogue…
+          </div>
         ) : (
           <>
             <div className="grid cols-3">
               {data?.catalog.map((p) => {
-                const byok = settings.connections.filter((c) => c.provider === p.id);
+                const byok = settings.connections.filter(
+                  (c) => c.provider === p.id,
+                );
                 return (
                   <div className="metric" key={p.id}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                      }}
+                    >
                       <div className="metric-label">{p.label}</div>
                       {p.hasEnvKey ? (
-                        <span className="badge sev-low" style={{ background: "rgba(52,211,153,0.15)", color: "var(--good)" }}>env key active</span>
+                        <span
+                          className="badge sev-low"
+                          style={{
+                            background: "rgba(52,211,153,0.15)",
+                            color: "var(--good)",
+                          }}
+                        >
+                          env key active
+                        </span>
                       ) : byok.length ? (
-                        <span className="badge sev-low" style={{ background: "rgba(91,140,255,0.15)", color: "var(--brand-2)" }}>{byok.length} BYOK</span>
+                        <span
+                          className="badge sev-low"
+                          style={{
+                            background: "rgba(91,140,255,0.15)",
+                            color: "var(--brand-2)",
+                          }}
+                        >
+                          {byok.length} BYOK
+                        </span>
                       ) : (
                         <span className="chip">not configured</span>
                       )}
                     </div>
                     <div className="metric-note" style={{ marginTop: 8 }}>
-                      {PROVIDER_META[p.id]?.hint} Default: <code>{p.defaultModel || "—"}</code>
+                      {PROVIDER_META[p.id]?.hint} Default:{" "}
+                      <code>{p.defaultModel || "—"}</code>
                     </div>
                   </div>
                 );
               })}
             </div>
-            <div className="section-title">Free models discovered on OpenRouter · {data?.freeModelCount ?? 0}</div>
+            <div className="section-title">
+              Free models discovered on OpenRouter · {data?.freeModelCount ?? 0}
+            </div>
             {data && data.freeModels.length > 0 ? (
-              <div className="card" style={{ maxHeight: 320, overflowY: "auto" }}>
+              <div
+                className="card"
+                style={{ maxHeight: 320, overflowY: "auto" }}
+              >
                 {data.freeModels.slice(0, 80).map((m) => (
                   <div className="kv" key={m.id}>
-                    <span style={{ fontFamily: "var(--mono)", fontSize: 11.5 }}>{m.id}</span>
-                    <span className="muted">{m.contextLength ? `${(m.contextLength / 1000).toFixed(0)}k ctx` : ""}</span>
+                    <span style={{ fontFamily: "var(--mono)", fontSize: 11.5 }}>
+                      {m.id}
+                    </span>
+                    <span className="muted">
+                      {m.contextLength
+                        ? `${(m.contextLength / 1000).toFixed(0)}k ctx`
+                        : ""}
+                    </span>
                   </div>
                 ))}
               </div>
             ) : (
-              <div className="notice">No free models discovered yet — add an OpenRouter connection (a key is optional for listing) in Settings.</div>
+              <div className="notice">
+                No free models discovered yet — add an OpenRouter connection (a
+                key is optional for listing) in Settings.
+              </div>
             )}
           </>
-        )
-      )}
+        ))}
 
       {tab === "explorer" && <ModelExplorer settings={settings} />}
       {tab === "mule" && <Mule settings={settings} audit={audit} />}
@@ -912,11 +1557,19 @@ function AiStudio({
 }
 
 function ModelExplorer({ settings }: { settings: AiSettings }) {
-  const [connId, setConnId] = useState<string>(settings.connections[0]?.id || "");
-  const [models, setModels] = useState<{ id: string; label: string; contextLength?: number; free?: boolean }[]>([]);
+  const [connId, setConnId] = useState<string>(
+    settings.connections[0]?.id || "",
+  );
+  const [models, setModels] = useState<
+    { id: string; label: string; contextLength?: number; free?: boolean }[]
+  >([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
-  const [testResult, setTestResult] = useState<{ ok: boolean; message: string; latencyMs: number } | null>(null);
+  const [testResult, setTestResult] = useState<{
+    ok: boolean;
+    message: string;
+    latencyMs: number;
+  } | null>(null);
   const [filter, setFilter] = useState("");
 
   const conn = settings.connections.find((c) => c.id === connId);
@@ -954,14 +1607,25 @@ function ModelExplorer({ settings }: { settings: AiSettings }) {
       const data = await res.json();
       setTestResult(data);
     } catch (e) {
-      setTestResult({ ok: false, message: e instanceof Error ? e.message : "Test failed.", latencyMs: 0 });
+      setTestResult({
+        ok: false,
+        message: e instanceof Error ? e.message : "Test failed.",
+        latencyMs: 0,
+      });
     }
   };
 
-  const shown = models.filter((m) => !filter || m.id.toLowerCase().includes(filter.toLowerCase()));
+  const shown = models.filter(
+    (m) => !filter || m.id.toLowerCase().includes(filter.toLowerCase()),
+  );
 
   if (!settings.connections.length) {
-    return <div className="notice">Add a connection first (sidebar → AI connections &amp; BYOK) to browse and test its live model list.</div>;
+    return (
+      <div className="notice">
+        Add a connection first (sidebar → AI connections &amp; BYOK) to browse
+        and test its live model list.
+      </div>
+    );
   }
 
   return (
@@ -969,39 +1633,84 @@ function ModelExplorer({ settings }: { settings: AiSettings }) {
       <div className="runbar">
         <div className="field" style={{ flex: 1 }}>
           <label>Connection</label>
-          <select value={connId} onChange={(e) => { setConnId(e.target.value); setModels([]); setTestResult(null); }}>
+          <select
+            value={connId}
+            onChange={(e) => {
+              setConnId(e.target.value);
+              setModels([]);
+              setTestResult(null);
+            }}
+          >
             {settings.connections.map((c) => (
-              <option key={c.id} value={c.id}>{c.label} ({PROVIDER_META[c.provider]?.label})</option>
+              <option key={c.id} value={c.id}>
+                {c.label} ({PROVIDER_META[c.provider]?.label})
+              </option>
             ))}
           </select>
         </div>
-        <div className="field"><label>&nbsp;</label><button className="btn sm" onClick={discover} disabled={loading}>{loading ? "Discovering…" : "Discover models"}</button></div>
-        <div className="field"><label>&nbsp;</label><button className="btn ghost sm" onClick={test}>Test connection</button></div>
+        <div className="field">
+          <label>&nbsp;</label>
+          <button className="btn sm" onClick={discover} disabled={loading}>
+            {loading ? "Discovering…" : "Discover models"}
+          </button>
+        </div>
+        <div className="field">
+          <label>&nbsp;</label>
+          <button className="btn ghost sm" onClick={test}>
+            Test connection
+          </button>
+        </div>
         <div className="field" style={{ flex: 1 }}>
           <label>Filter</label>
-          <input type="text" placeholder="filter model ids…" value={filter} onChange={(e) => setFilter(e.target.value)} />
+          <input
+            type="text"
+            placeholder="filter model ids…"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          />
         </div>
       </div>
       {testResult && (
-        <div className={`notice ${testResult.ok ? "ok" : "bad"}`} style={{ marginBottom: 14 }}>
+        <div
+          className={`notice ${testResult.ok ? "ok" : "bad"}`}
+          style={{ marginBottom: 14 }}
+        >
           <span className={`dot ${testResult.ok ? "ok" : "bad"}`} />
           {testResult.message} ({testResult.latencyMs}ms)
         </div>
       )}
-      {err && <div className="notice bad" style={{ marginBottom: 14 }}>{err}</div>}
+      {err && (
+        <div className="notice bad" style={{ marginBottom: 14 }}>
+          {err}
+        </div>
+      )}
       {shown.length > 0 ? (
         <div className="card" style={{ maxHeight: 420, overflowY: "auto" }}>
           {shown.map((m) => (
             <div className="kv" key={m.id}>
               <span style={{ fontFamily: "var(--mono)", fontSize: 12 }}>
-                {m.id} {m.free && <span className="chip" style={{ marginLeft: 6 }}>free</span>}
+                {m.id}{" "}
+                {m.free && (
+                  <span className="chip" style={{ marginLeft: 6 }}>
+                    free
+                  </span>
+                )}
               </span>
-              <span className="muted">{m.contextLength ? `${(m.contextLength / 1000).toFixed(0)}k ctx` : ""}</span>
+              <span className="muted">
+                {m.contextLength
+                  ? `${(m.contextLength / 1000).toFixed(0)}k ctx`
+                  : ""}
+              </span>
             </div>
           ))}
         </div>
       ) : (
-        !loading && <div className="empty">Click &quot;Discover models&quot; to fetch the live list for this connection.</div>
+        !loading && (
+          <div className="empty">
+            Click &quot;Discover models&quot; to fetch the live list for this
+            connection.
+          </div>
+        )
       )}
     </>
   );
@@ -1009,14 +1718,31 @@ function ModelExplorer({ settings }: { settings: AiSettings }) {
 
 /* ------- Mule (free-form chat, any configured LLM) ------- */
 
-interface ChatTurn { role: "user" | "assistant"; content: string }
+interface ChatTurn {
+  role: "user" | "assistant";
+  content: string;
+}
 
-function Mule({ settings, audit }: { settings: AiSettings; audit: AuditResult | null }) {
+function Mule({
+  settings,
+  audit,
+}: {
+  settings: AiSettings;
+  audit: AuditResult | null;
+}) {
   const options = useMemo(() => {
-    const list = settings.connections.map((c) => ({ id: c.id, label: `${c.label} (${PROVIDER_META[c.provider]?.label})` }));
+    const list = settings.connections.map((c) => ({
+      id: c.id,
+      label: `${c.label} (${PROVIDER_META[c.provider]?.label})`,
+    }));
     return list;
   }, [settings.connections]);
-  const [connId, setConnId] = useState(settings.routing.chat || settings.defaultConnectionId || options[0]?.id || "");
+  const [connId, setConnId] = useState(
+    settings.routing.chat ||
+      settings.defaultConnectionId ||
+      options[0]?.id ||
+      "",
+  );
   const [includeContext, setIncludeContext] = useState(!!audit);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [input, setInput] = useState("");
@@ -1025,7 +1751,10 @@ function Mule({ settings, audit }: { settings: AiSettings; audit: AuditResult | 
   const logRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: "smooth" });
+    logRef.current?.scrollTo({
+      top: logRef.current.scrollHeight,
+      behavior: "smooth",
+    });
   }, [turns, sending]);
 
   const conn = settings.connections.find((c) => c.id === connId);
@@ -1073,35 +1802,63 @@ function Mule({ settings, audit }: { settings: AiSettings; audit: AuditResult | 
           <label>Connection</label>
           {options.length ? (
             <select value={connId} onChange={(e) => setConnId(e.target.value)}>
-              {options.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+              {options.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.label}
+                </option>
+              ))}
             </select>
           ) : (
-            <span className="muted" style={{ fontSize: 12 }}>Using server-configured provider (no BYOK connection saved)</span>
+            <span className="muted" style={{ fontSize: 12 }}>
+              Using server-configured provider (no BYOK connection saved)
+            </span>
           )}
         </div>
         <div className="field">
           <label>&nbsp;</label>
           <div className="toggle-row" style={{ padding: 0 }}>
-            <input type="checkbox" checked={includeContext} disabled={!audit} onChange={(e) => setIncludeContext(e.target.checked)} />
-            <span className="label" style={{ marginLeft: 6 }}>Ground in current audit</span>
+            <input
+              type="checkbox"
+              checked={includeContext}
+              disabled={!audit}
+              onChange={(e) => setIncludeContext(e.target.checked)}
+            />
+            <span className="label" style={{ marginLeft: 6 }}>
+              Ground in current audit
+            </span>
           </div>
         </div>
         <div className="field" style={{ flex: 1, justifyContent: "flex-end" }}>
-          <button className="btn ghost sm" onClick={() => setTurns([])} disabled={!turns.length}>Clear chat</button>
+          <button
+            className="btn ghost sm"
+            onClick={() => setTurns([])}
+            disabled={!turns.length}
+          >
+            Clear chat
+          </button>
         </div>
       </div>
       <div className="chat-shell">
         <div className="chat-log" ref={logRef}>
           {turns.length === 0 && (
             <div className="chat-empty">
-              This is Mule — your own LLM, wired to whatever provider and model you&apos;ve configured.<br />
+              This is Mule — your own LLM, wired to whatever provider and model
+              you&apos;ve configured.
+              <br />
               Ask it about your audit, get it to draft a fix, or just chat.
             </div>
           )}
           {turns.map((t, i) => (
-            <div key={i} className={`chat-msg ${t.role}`}>{t.content}</div>
+            <div key={i} className={`chat-msg ${t.role}`}>
+              {t.content}
+            </div>
           ))}
-          {sending && <div className="chat-msg assistant"><span className="spinner" />thinking…</div>}
+          {sending && (
+            <div className="chat-msg assistant">
+              <span className="spinner" />
+              thinking…
+            </div>
+          )}
         </div>
         <div className="chat-input-row">
           <textarea
@@ -1115,10 +1872,20 @@ function Mule({ settings, audit }: { settings: AiSettings; audit: AuditResult | 
               }
             }}
           />
-          <button className="btn" onClick={send} disabled={sending || !input.trim()}>Send</button>
+          <button
+            className="btn"
+            onClick={send}
+            disabled={sending || !input.trim()}
+          >
+            Send
+          </button>
         </div>
       </div>
-      {err && <div className="notice bad" style={{ marginTop: 12 }}>{err}</div>}
+      {err && (
+        <div className="notice bad" style={{ marginTop: 12 }}>
+          {err}
+        </div>
+      )}
     </>
   );
 }
@@ -1165,39 +1932,77 @@ function SettingsModal({
   };
 
   const setRouting = (task: AiTask, id: string) => {
-    onChange({ ...settings, routing: { ...settings.routing, [task]: id || undefined } });
+    onChange({
+      ...settings,
+      routing: { ...settings.routing, [task]: id || undefined },
+    });
   };
 
   const setCrawl = (patch: Partial<AiSettings["crawlDefaults"]>) => {
-    onChange({ ...settings, crawlDefaults: { ...settings.crawlDefaults, ...patch } });
+    onChange({
+      ...settings,
+      crawlDefaults: { ...settings.crawlDefaults, ...patch },
+    });
   };
 
   return (
-    <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+    <div
+      className="modal-overlay"
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+    >
       <div className="modal">
         <div className="modal-header">
           <h3>Settings</h3>
-          <button className="icon-btn" onClick={onClose}>✕</button>
+          <button className="icon-btn" onClick={onClose}>
+            ✕
+          </button>
         </div>
         <div className="modal-tabs">
-          <button className={tab === "connections" ? "active" : ""} onClick={() => setTab("connections")}>AI connections (BYOK)</button>
-          <button className={tab === "crawl" ? "active" : ""} onClick={() => setTab("crawl")}>Crawl defaults</button>
+          <button
+            className={tab === "connections" ? "active" : ""}
+            onClick={() => setTab("connections")}
+          >
+            AI connections (BYOK)
+          </button>
+          <button
+            className={tab === "crawl" ? "active" : ""}
+            onClick={() => setTab("crawl")}
+          >
+            Crawl defaults
+          </button>
         </div>
         <div className="modal-body">
-          {tab === "connections" && (
-            editing ? (
-              <ConnectionForm value={editing} onCancel={() => setEditing(null)} onSave={saveConn} />
+          {tab === "connections" &&
+            (editing ? (
+              <ConnectionForm
+                value={editing}
+                onCancel={() => setEditing(null)}
+                onSave={saveConn}
+              />
             ) : (
               <>
-                <p className="muted" style={{ fontSize: 12.5, marginBottom: 12 }}>
-                  Keys are stored only in this browser (localStorage) and sent directly with each AI
-                  request — never persisted on our servers, never logged. Add any provider: cloud APIs
-                  with your own key, a custom OpenAI-compatible endpoint, or a local Ollama / LM Studio
-                  server.
+                <p
+                  className="muted"
+                  style={{ fontSize: 12.5, marginBottom: 12 }}
+                >
+                  Keys are stored only in this browser (localStorage) and sent
+                  directly with each AI request — never persisted on our
+                  servers, never logged. Add any provider: cloud APIs with your
+                  own key, a custom OpenAI-compatible endpoint, or a local
+                  Ollama / LM Studio server.
                 </p>
-                <button className="btn sm" onClick={startNew} style={{ marginBottom: 14 }}>+ Add connection</button>
+                <button
+                  className="btn sm"
+                  onClick={startNew}
+                  style={{ marginBottom: 14 }}
+                >
+                  + Add connection
+                </button>
                 {settings.connections.length === 0 ? (
-                  <div className="empty">No connections yet. Server env vars (if set) are used as a fallback.</div>
+                  <div className="empty">
+                    No connections yet. Server env vars (if set) are used as a
+                    fallback.
+                  </div>
                 ) : (
                   <div className="conn-list">
                     {settings.connections.map((c) => (
@@ -1205,16 +2010,40 @@ function SettingsModal({
                         <div className="conn-head">
                           <div>
                             <span className="dot unknown" />
-                            <span className="conn-name">{c.label || "Untitled connection"}</span>{" "}
-                            <span className="conn-provider">{PROVIDER_META[c.provider]?.label} · {c.model || "default model"}</span>
-                            {settings.defaultConnectionId === c.id && <span className="chip" style={{ marginLeft: 8 }}>default</span>}
+                            <span className="conn-name">
+                              {c.label || "Untitled connection"}
+                            </span>{" "}
+                            <span className="conn-provider">
+                              {PROVIDER_META[c.provider]?.label} ·{" "}
+                              {c.model || "default model"}
+                            </span>
+                            {settings.defaultConnectionId === c.id && (
+                              <span className="chip" style={{ marginLeft: 8 }}>
+                                default
+                              </span>
+                            )}
                           </div>
                           <div className="conn-actions">
                             {settings.defaultConnectionId !== c.id && (
-                              <button className="btn ghost sm" onClick={() => setDefault(c.id)}>Make default</button>
+                              <button
+                                className="btn ghost sm"
+                                onClick={() => setDefault(c.id)}
+                              >
+                                Make default
+                              </button>
                             )}
-                            <button className="btn ghost sm" onClick={() => setEditing(c)}>Edit</button>
-                            <button className="btn ghost sm" onClick={() => deleteConn(c.id)}>Delete</button>
+                            <button
+                              className="btn ghost sm"
+                              onClick={() => setEditing(c)}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              className="btn ghost sm"
+                              onClick={() => deleteConn(c.id)}
+                            >
+                              Delete
+                            </button>
                           </div>
                         </div>
                       </div>
@@ -1224,85 +2053,167 @@ function SettingsModal({
                 {settings.connections.length > 0 && (
                   <>
                     <div className="section-title">Task routing</div>
-                    <p className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
-                      Optionally send specific tasks to specific connections. Falls back to your default.
+                    <p
+                      className="muted"
+                      style={{ fontSize: 12, marginBottom: 8 }}
+                    >
+                      Optionally send specific tasks to specific connections.
+                      Falls back to your default.
                     </p>
                     <div className="form-grid">
-                      {(["explain", "fix", "summary", "chat"] as AiTask[]).map((task) => (
-                        <div className="form-row" key={task}>
-                          <label>{task}</label>
-                          <select value={settings.routing[task] || ""} onChange={(e) => setRouting(task, e.target.value)}>
-                            <option value="">Use default</option>
-                            {settings.connections.map((c) => (
-                              <option key={c.id} value={c.id}>{c.label}</option>
-                            ))}
-                          </select>
-                        </div>
-                      ))}
+                      {(["explain", "fix", "summary", "chat"] as AiTask[]).map(
+                        (task) => (
+                          <div className="form-row" key={task}>
+                            <label>{task}</label>
+                            <select
+                              value={settings.routing[task] || ""}
+                              onChange={(e) => setRouting(task, e.target.value)}
+                            >
+                              <option value="">Use default</option>
+                              {settings.connections.map((c) => (
+                                <option key={c.id} value={c.id}>
+                                  {c.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        ),
+                      )}
                     </div>
                   </>
                 )}
               </>
-            )
-          )}
+            ))}
 
           {tab === "crawl" && (
             <>
               <p className="muted" style={{ fontSize: 12.5, marginBottom: 12 }}>
-                These are the defaults every audit uses beyond the quick &quot;max pages&quot; control on the
-                toolbar. There is no fixed page cap in this product — raise it as high as your target
-                site (and your patience for a single ~50s serverless run) allows; a crawl always stops
-                cleanly and reports &quot;truncated&quot; instead of failing.
+                These are the defaults every audit uses beyond the quick
+                &quot;max pages&quot; control on the toolbar. There is no fixed
+                page cap in this product — raise it as high as your target site
+                (and your patience for a single ~50s serverless run) allows; a
+                crawl always stops cleanly and reports &quot;truncated&quot;
+                instead of failing.
               </p>
               <div className="form-grid">
                 <div className="form-row">
-                  <label>Default max pages ({CRAWL_LIMITS.maxPages} ceiling)</label>
+                  <label>
+                    Default max pages ({CRAWL_LIMITS.maxPages} ceiling)
+                  </label>
                   <input
-                    type="number" min={1} max={CRAWL_LIMITS.maxPages}
+                    type="number"
+                    min={1}
+                    max={CRAWL_LIMITS.maxPages}
                     value={settings.crawlDefaults.maxPages}
-                    onChange={(e) => setCrawl({ maxPages: Math.max(1, Math.min(CRAWL_LIMITS.maxPages, Number(e.target.value) || 1)) })}
+                    onChange={(e) =>
+                      setCrawl({
+                        maxPages: Math.max(
+                          1,
+                          Math.min(
+                            CRAWL_LIMITS.maxPages,
+                            Number(e.target.value) || 1,
+                          ),
+                        ),
+                      })
+                    }
                   />
                 </div>
                 <div className="form-row">
-                  <label>Max crawl depth ({CRAWL_LIMITS.maxDepth} ceiling)</label>
+                  <label>
+                    Max crawl depth ({CRAWL_LIMITS.maxDepth} ceiling)
+                  </label>
                   <input
-                    type="number" min={0} max={CRAWL_LIMITS.maxDepth}
+                    type="number"
+                    min={0}
+                    max={CRAWL_LIMITS.maxDepth}
                     value={settings.crawlDefaults.maxDepth}
-                    onChange={(e) => setCrawl({ maxDepth: Math.max(0, Math.min(CRAWL_LIMITS.maxDepth, Number(e.target.value) || 0)) })}
+                    onChange={(e) =>
+                      setCrawl({
+                        maxDepth: Math.max(
+                          0,
+                          Math.min(
+                            CRAWL_LIMITS.maxDepth,
+                            Number(e.target.value) || 0,
+                          ),
+                        ),
+                      })
+                    }
                   />
                 </div>
                 <div className="form-row">
-                  <label>Concurrency ({CRAWL_LIMITS.concurrency} ceiling)</label>
+                  <label>
+                    Concurrency ({CRAWL_LIMITS.concurrency} ceiling)
+                  </label>
                   <input
-                    type="number" min={1} max={CRAWL_LIMITS.concurrency}
+                    type="number"
+                    min={1}
+                    max={CRAWL_LIMITS.concurrency}
                     value={settings.crawlDefaults.concurrency}
-                    onChange={(e) => setCrawl({ concurrency: Math.max(1, Math.min(CRAWL_LIMITS.concurrency, Number(e.target.value) || 1)) })}
+                    onChange={(e) =>
+                      setCrawl({
+                        concurrency: Math.max(
+                          1,
+                          Math.min(
+                            CRAWL_LIMITS.concurrency,
+                            Number(e.target.value) || 1,
+                          ),
+                        ),
+                      })
+                    }
                   />
                 </div>
               </div>
               <div className="toggle-row">
                 <span className="label">Respect robots.txt</span>
-                <input type="checkbox" checked={settings.crawlDefaults.respectRobots} onChange={(e) => setCrawl({ respectRobots: e.target.checked })} />
+                <input
+                  type="checkbox"
+                  checked={settings.crawlDefaults.respectRobots}
+                  onChange={(e) =>
+                    setCrawl({ respectRobots: e.target.checked })
+                  }
+                />
               </div>
               <div className="toggle-row">
-                <span className="label">Check external links for broken targets</span>
-                <input type="checkbox" checked={settings.crawlDefaults.checkExternalLinks} onChange={(e) => setCrawl({ checkExternalLinks: e.target.checked })} />
+                <span className="label">
+                  Check external links for broken targets
+                </span>
+                <input
+                  type="checkbox"
+                  checked={settings.crawlDefaults.checkExternalLinks}
+                  onChange={(e) =>
+                    setCrawl({ checkExternalLinks: e.target.checked })
+                  }
+                />
               </div>
             </>
           )}
         </div>
         <div className="modal-footer">
-          <button className="btn ghost sm" onClick={onClose}>Close</button>
+          <button className="btn ghost sm" onClick={onClose}>
+            Close
+          </button>
         </div>
       </div>
     </div>
   );
 }
 
-function ConnectionForm({ value, onCancel, onSave }: { value: AiConnection; onCancel: () => void; onSave: (c: AiConnection) => void }) {
+function ConnectionForm({
+  value,
+  onCancel,
+  onSave,
+}: {
+  value: AiConnection;
+  onCancel: () => void;
+  onSave: (c: AiConnection) => void;
+}) {
   const [c, setC] = useState<AiConnection>(value);
   const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{ ok: boolean; message: string; latencyMs: number } | null>(null);
+  const [testResult, setTestResult] = useState<{
+    ok: boolean;
+    message: string;
+    latencyMs: number;
+  } | null>(null);
   const meta = PROVIDER_META[c.provider];
 
   const runTest = async () => {
@@ -1312,13 +2223,27 @@ function ConnectionForm({ value, onCancel, onSave }: { value: AiConnection; onCa
       const res = await fetch("/api/ai/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider: c.provider, apiKey: c.apiKey, baseUrl: c.baseUrl, model: c.model }),
+        body: JSON.stringify({
+          provider: c.provider,
+          apiKey: c.apiKey,
+          baseUrl: c.baseUrl,
+          model: c.model,
+        }),
       });
       const data = await res.json();
       setTestResult(data);
-      setC((cur) => ({ ...cur, lastTestedAt: new Date().toISOString(), lastTestOk: data.ok, lastTestMessage: data.message }));
+      setC((cur) => ({
+        ...cur,
+        lastTestedAt: new Date().toISOString(),
+        lastTestOk: data.ok,
+        lastTestMessage: data.message,
+      }));
     } catch (e) {
-      setTestResult({ ok: false, message: e instanceof Error ? e.message : "Test failed.", latencyMs: 0 });
+      setTestResult({
+        ok: false,
+        message: e instanceof Error ? e.message : "Test failed.",
+        latencyMs: 0,
+      });
     } finally {
       setTesting(false);
     }
@@ -1334,41 +2259,85 @@ function ConnectionForm({ value, onCancel, onSave }: { value: AiConnection; onCa
             onChange={(e) => {
               const provider = e.target.value as AiConnection["provider"];
               const m = PROVIDER_META[provider];
-              setC((cur) => ({ ...cur, provider, baseUrl: m?.localDefault || cur.baseUrl }));
+              setC((cur) => ({
+                ...cur,
+                provider,
+                baseUrl: m?.localDefault || cur.baseUrl,
+              }));
             }}
           >
             {Object.entries(PROVIDER_META).map(([id, m]) => (
-              <option key={id} value={id}>{m.label}</option>
+              <option key={id} value={id}>
+                {m.label}
+              </option>
             ))}
           </select>
           <span className="hint">{meta?.hint}</span>
         </div>
         <div className="form-row">
           <label>Label</label>
-          <input type="text" placeholder="e.g. My OpenRouter key" value={c.label} onChange={(e) => setC({ ...c, label: e.target.value })} />
+          <input
+            type="text"
+            placeholder="e.g. My OpenRouter key"
+            value={c.label}
+            onChange={(e) => setC({ ...c, label: e.target.value })}
+          />
         </div>
         <div className="form-row">
           <label>API key {meta?.needsKey ? "" : "(optional)"}</label>
-          <input type="password" placeholder={meta?.needsKey ? "required" : "leave blank if none"} value={c.apiKey || ""} onChange={(e) => setC({ ...c, apiKey: e.target.value })} />
+          <input
+            type="password"
+            placeholder={meta?.needsKey ? "required" : "leave blank if none"}
+            value={c.apiKey || ""}
+            onChange={(e) => setC({ ...c, apiKey: e.target.value })}
+          />
         </div>
         <div className="form-row">
           <label>Base URL override (optional)</label>
-          <input type="text" placeholder={c.provider === "custom" ? "https://your-endpoint/v1" : "leave blank for default"} value={c.baseUrl || ""} onChange={(e) => setC({ ...c, baseUrl: e.target.value })} />
+          <input
+            type="text"
+            placeholder={
+              c.provider === "custom"
+                ? "https://your-endpoint/v1"
+                : "leave blank for default"
+            }
+            value={c.baseUrl || ""}
+            onChange={(e) => setC({ ...c, baseUrl: e.target.value })}
+          />
         </div>
         <div className="form-row" style={{ gridColumn: "1 / -1" }}>
           <label>Model (optional — leave blank for provider default)</label>
-          <input type="text" placeholder="e.g. gpt-4o-mini, claude-3-5-haiku-latest, llama3.2" value={c.model || ""} onChange={(e) => setC({ ...c, model: e.target.value })} />
+          <input
+            type="text"
+            placeholder="e.g. gpt-4o-mini, claude-3-5-haiku-latest, llama3.2"
+            value={c.model || ""}
+            onChange={(e) => setC({ ...c, model: e.target.value })}
+          />
         </div>
       </div>
       {testResult && (
-        <div className={`notice ${testResult.ok ? "ok" : "bad"}`} style={{ marginTop: 12 }}>
-          <span className={`dot ${testResult.ok ? "ok" : "bad"}`} />{testResult.message} ({testResult.latencyMs}ms)
+        <div
+          className={`notice ${testResult.ok ? "ok" : "bad"}`}
+          style={{ marginTop: 12 }}
+        >
+          <span className={`dot ${testResult.ok ? "ok" : "bad"}`} />
+          {testResult.message} ({testResult.latencyMs}ms)
         </div>
       )}
       <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap" }}>
-        <button className="btn sm" onClick={() => onSave(c)} disabled={!c.label.trim()}>Save connection</button>
-        <button className="btn ghost sm" onClick={runTest} disabled={testing}>{testing ? "Testing…" : "Test connection"}</button>
-        <button className="btn ghost sm" onClick={onCancel}>Cancel</button>
+        <button
+          className="btn sm"
+          onClick={() => onSave(c)}
+          disabled={!c.label.trim()}
+        >
+          Save connection
+        </button>
+        <button className="btn ghost sm" onClick={runTest} disabled={testing}>
+          {testing ? "Testing…" : "Test connection"}
+        </button>
+        <button className="btn ghost sm" onClick={onCancel}>
+          Cancel
+        </button>
       </div>
     </div>
   );
@@ -1404,14 +2373,24 @@ function Roadmap() {
         <h3>Shipped in this build</h3>
         <div className="sub">Everything here runs live on Vercel</div>
         {done.map((d) => (
-          <div className="kv" key={d}><span style={{ color: "var(--good)" }}>✓</span><span style={{ color: "var(--text)", textAlign: "right" }}>{d}</span></div>
+          <div className="kv" key={d}>
+            <span style={{ color: "var(--good)" }}>✓</span>
+            <span style={{ color: "var(--text)", textAlign: "right" }}>
+              {d}
+            </span>
+          </div>
         ))}
       </div>
       <div className="card">
         <h3>Production roadmap</h3>
-        <div className="sub">Requires cloud workers &amp; a database — the honest next phases</div>
+        <div className="sub">
+          Requires cloud workers &amp; a database — the honest next phases
+        </div>
         {next.map((d) => (
-          <div className="kv" key={d}><span className="muted">○</span><span style={{ textAlign: "right" }}>{d}</span></div>
+          <div className="kv" key={d}>
+            <span className="muted">○</span>
+            <span style={{ textAlign: "right" }}>{d}</span>
+          </div>
         ))}
       </div>
     </div>

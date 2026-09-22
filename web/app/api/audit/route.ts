@@ -51,7 +51,11 @@ export async function GET(request: Request) {
       { runs: [] },
       { headers: { "Cache-Control": "no-store" } },
     );
-  const endpoint = `${config.url}/rest/v1/audit_runs?select=id,url,audit_id,engine_version,status,summary,created_at,completed_at&owner_id=eq.${encodeURIComponent(actor.id)}&order=created_at.desc&limit=20`;
+  const auditId = new URL(request.url).searchParams.get("auditId") || "";
+  const select = auditId
+    ? "id,url,audit_id,engine_version,status,summary,result,created_at,completed_at"
+    : "id,url,audit_id,engine_version,status,summary,created_at,completed_at";
+  const endpoint = `${config.url}/rest/v1/audit_runs?select=${select}&owner_id=eq.${encodeURIComponent(actor.id)}${auditId ? `&audit_id=eq.${encodeURIComponent(auditId)}&limit=1` : "&order=created_at.desc&limit=20"}`;
   const response = await fetch(endpoint, {
     headers: supabaseHeaders(config.key),
     cache: "no-store",
@@ -61,8 +65,17 @@ export async function GET(request: Request) {
       { error: "Unable to load audit history." },
       { status: 502 },
     );
+  const rows = await response.json();
+  if (auditId) {
+    return rows[0]?.result
+      ? Response.json(
+          { audit: rows[0].result },
+          { headers: { "Cache-Control": "no-store" } },
+        )
+      : Response.json({ error: "Audit not found." }, { status: 404 });
+  }
   return Response.json(
-    { runs: await response.json() },
+    { runs: rows },
     { headers: { "Cache-Control": "no-store" } },
   );
 }
