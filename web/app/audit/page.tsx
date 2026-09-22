@@ -1046,6 +1046,29 @@ function FixCenter({
     Record<string, "draft" | "ready" | "verified">
   >({});
   const [selected, setSelected] = useState<string | null>(null);
+  const [filter, setFilter] = useState<"all" | "draft" | "ready" | "verified">(
+    "all",
+  );
+  useEffect(() => {
+    fetch(`/api/fixes?auditId=${encodeURIComponent(audit.auditId)}`, {
+      cache: "no-store",
+    })
+      .then(async (response) => {
+        if (!response.ok) return;
+        const data = (await response.json()) as {
+          fixes?: Array<{
+            opportunity_id: string;
+            status: "draft" | "ready" | "verified";
+          }>;
+        };
+        setStates(
+          Object.fromEntries(
+            (data.fixes || []).map((fix) => [fix.opportunity_id, fix.status]),
+          ),
+        );
+      })
+      .catch(() => null);
+  }, [audit.auditId]);
   const [playbooks, setPlaybooks] = useState<Record<string, string>>({});
   const [generating, setGenerating] = useState<string | null>(null);
   const generatePlaybook = async (opp: Opportunity) => {
@@ -1085,127 +1108,154 @@ function FixCenter({
   return (
     <div>
       <div className="card" style={{ marginBottom: 16 }}>
-        <h3>Fix Center</h3>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 12,
+          }}
+        >
+          <h3>Fix Center</h3>
+          <select
+            aria-label="Filter fixes"
+            value={filter}
+            onChange={(event) => setFilter(event.target.value as typeof filter)}
+          >
+            <option value="all">All states</option>
+            <option value="draft">Draft</option>
+            <option value="ready">Ready</option>
+            <option value="verified">Verified</option>
+          </select>
+        </div>
         <p className="muted">
           Evidence-backed resolution queue. Move a recommendation through draft,
           ready for approval, and verified only after validation.
         </p>
       </div>
-      {audit.opportunities.map((opp) => {
-        const state = states[opp.id] || "draft";
-        const advance = async () => {
-          const next =
-            state === "draft"
-              ? "ready"
-              : state === "ready"
-                ? "verified"
-                : "draft";
-          setStates((current) => ({ ...current, [opp.id]: next }));
-          await fetch("/api/fixes", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              auditId: audit.auditId,
-              projectId: projectId || undefined,
-              opportunityId: opp.id,
-              title: opp.title,
-              status: next,
-              evidence: opp.sampleEvidence,
-              recommendation: opp.recommendation,
-              verificationNote:
-                next === "verified"
-                  ? "Verified after rerunning the relevant audit rule."
-                  : undefined,
-              rollbackPlan:
-                "Revert the change and rerun the audit if the finding persists or a regression appears.",
-            }),
-          });
-        };
-        return (
-          <div className="opp" key={opp.id}>
-            <div className="opp-head">
-              <div style={{ flex: 1 }}>
-                <h4>{opp.title}</h4>
-                <div className="meta">
-                  <span className={sevClass(opp.severity)}>{opp.severity}</span>
-                  <span className="chip">
-                    {opp.affectedCount} affected pages
-                  </span>
-                  <span className="chip">state: {state}</span>
+      {audit.opportunities
+        .filter(
+          (opp) => filter === "all" || (states[opp.id] || "draft") === filter,
+        )
+        .map((opp) => {
+          const state = states[opp.id] || "draft";
+          const advance = async () => {
+            const next =
+              state === "draft"
+                ? "ready"
+                : state === "ready"
+                  ? "verified"
+                  : "draft";
+            setStates((current) => ({ ...current, [opp.id]: next }));
+            await fetch("/api/fixes", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                auditId: audit.auditId,
+                projectId: projectId || undefined,
+                opportunityId: opp.id,
+                title: opp.title,
+                status: next,
+                evidence: opp.sampleEvidence,
+                recommendation: opp.recommendation,
+                verificationNote:
+                  next === "verified"
+                    ? "Verified after rerunning the relevant audit rule."
+                    : undefined,
+                rollbackPlan:
+                  "Revert the change and rerun the audit if the finding persists or a regression appears.",
+              }),
+            });
+          };
+          return (
+            <div className="opp" key={opp.id}>
+              <div className="opp-head">
+                <div style={{ flex: 1 }}>
+                  <h4>{opp.title}</h4>
+                  <div className="meta">
+                    <span className={sevClass(opp.severity)}>
+                      {opp.severity}
+                    </span>
+                    <span className="chip">
+                      {opp.affectedCount} affected pages
+                    </span>
+                    <span className="chip">state: {state}</span>
+                  </div>
+                  <p>
+                    <b>Evidence:</b>{" "}
+                    {opp.sampleEvidence.slice(0, 2).join(" · ") ||
+                      "Recorded by deterministic rule engine."}
+                  </p>
+                  <p>
+                    <b>Recommended resolution:</b> {opp.recommendation}
+                  </p>
                 </div>
-                <p>
-                  <b>Evidence:</b>{" "}
-                  {opp.sampleEvidence.slice(0, 2).join(" · ") ||
-                    "Recorded by deterministic rule engine."}
-                </p>
-                <p>
-                  <b>Recommended resolution:</b> {opp.recommendation}
-                </p>
+                <div className="opp-score">
+                  <b style={{ color: scoreColor(opp.score) }}>{opp.score}</b>
+                  <span>priority</span>
+                </div>
               </div>
-              <div className="opp-score">
-                <b style={{ color: scoreColor(opp.score) }}>{opp.score}</b>
-                <span>priority</span>
+              <div className="actions">
+                <button
+                  className="btn ghost sm"
+                  onClick={() => void generatePlaybook(opp)}
+                  disabled={generating === opp.id}
+                >
+                  {generating === opp.id
+                    ? "Generating…"
+                    : "Generate evidence-grounded playbook"}
+                </button>
+                <button className="btn sm" onClick={() => void advance()}>
+                  {state === "draft"
+                    ? "Mark ready for approval"
+                    : state === "ready"
+                      ? "Mark verified"
+                      : "Reopen fix"}
+                </button>
+                <button
+                  className="btn ghost sm"
+                  onClick={() =>
+                    setSelected(selected === opp.id ? null : opp.id)
+                  }
+                >
+                  {selected === opp.id
+                    ? "Hide validation"
+                    : "Validation checklist"}
+                </button>
               </div>
+              {playbooks[opp.id] && (
+                <div className="ai-out">
+                  <b>Evidence-grounded playbook</b>
+                  <br />
+                  {playbooks[opp.id]}
+                  <br />
+                  <span className="muted">
+                    Validate affected URLs and retain the rollback plan before
+                    applying.
+                  </span>
+                </div>
+              )}
+              {selected === opp.id && (
+                <div className="ai-out">
+                  <b>Validation checklist</b>
+                  <br />
+                  1. Apply the change only to the affected scope.
+                  <br />
+                  2. Re-run the relevant audit rule.
+                  <br />
+                  3. Confirm the affected URL and evidence changed.
+                  <br />
+                  4. Roll back if the finding persists or a regression appears.
+                  <br />
+                  <span className="muted">
+                    AI playbook generation remains governed by the selected
+                    server-side credential.
+                  </span>
+                </div>
+              )}
             </div>
-            <div className="actions">
-              <button
-                className="btn ghost sm"
-                onClick={() => void generatePlaybook(opp)}
-                disabled={generating === opp.id}
-              >
-                {generating === opp.id
-                  ? "Generating…"
-                  : "Generate evidence-grounded playbook"}
-              </button>
-              <button className="btn sm" onClick={() => void advance()}>
-                {state === "draft"
-                  ? "Mark ready for approval"
-                  : state === "ready"
-                    ? "Mark verified"
-                    : "Reopen fix"}
-              </button>
-              <button
-                className="btn ghost sm"
-                onClick={() => setSelected(selected === opp.id ? null : opp.id)}
-              >
-                {selected === opp.id
-                  ? "Hide validation"
-                  : "Validation checklist"}
-              </button>
-            </div>
-            {playbooks[opp.id] && (
-              <div className="ai-out">
-                <b>Evidence-grounded playbook</b>
-                <br />
-                {playbooks[opp.id]}
-                <br />
-                <span className="muted">
-                  Validate affected URLs and retain the rollback plan before
-                  applying.
-                </span>
-              </div>
-            )}
-            {selected === opp.id && (
-              <div className="ai-out">
-                <b>Validation checklist</b>
-                <br />
-                1. Apply the change only to the affected scope.
-                <br />
-                2. Re-run the relevant audit rule.
-                <br />
-                3. Confirm the affected URL and evidence changed.
-                <br />
-                4. Roll back if the finding persists or a regression appears.
-                <br />
-                <span className="muted">
-                  AI playbook generation remains governed by the selected
-                  server-side credential.
-                </span>
-              </div>
-            )}
-          </div>
-        );
-      })}
+          );
+        })}
     </div>
   );
 }
