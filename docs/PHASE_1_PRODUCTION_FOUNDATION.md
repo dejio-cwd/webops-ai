@@ -8,7 +8,7 @@ This branch establishes the secure M0–M2 foundation without treating source fi
 
 - Supabase email/password authentication with confirmation, recovery, reset, refresh, logout, and HttpOnly session cookies.
 - Authentication-aware middleware and protected workspace, onboarding, audit, and AI routes.
-- Organizations, memberships, roles, projects, environments, domain verification, and audit-event schema.
+- Organizations, memberships, roles, projects, environments, domain verification, audit-event, and pending-invitation schema.
 - Owner/admin authorization for membership and provider-credential management.
 - Final-owner and cross-tenant behavior requires staging acceptance testing.
 
@@ -35,13 +35,14 @@ This branch establishes the secure M0–M2 foundation without treating source fi
 - `/workspace` is the governed Command Center and tenant-management shell.
 - `/audit` is the explicit evidence audit workbench.
 - `/ai-studio` is the governed provider credential workspace.
+- `/accept-invitation` accepts a matching, unexpired workspace invitation after authentication.
 - `/` redirects to `/workspace` so users do not unexpectedly land in the legacy audit shell.
 - Workspace module actions route to real audit, project, security, team, or AI workflows and do not fabricate metrics.
 - Loading, empty, error, protected-route, responsive, and evidence-first states are present in the current shell.
 
 ## Required external configuration
 
-1. Apply both files in `supabase/migrations` to the intended Supabase project.
+1. Apply all migration files in `supabase/migrations` to the intended Supabase project, including `20260922_phase1_invitations.sql` before testing invitations.
 2. Configure `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` in Vercel.
 3. Configure `SUPABASE_SERVICE_ROLE_KEY` server-side only.
 4. Configure `CREDENTIAL_ENCRYPTION_KEY` server-side only; use a high-entropy value of at least 32 characters and never commit or disclose it.
@@ -64,7 +65,7 @@ This branch establishes the secure M0–M2 foundation without treating source fi
 
 - Authenticated signup and recovery lifecycle.
 - RLS and cross-tenant isolation.
-- Invitation lifecycle for users without accounts.
+- Invitation lifecycle for users without accounts; the invitations migration must be applied in staging.
 - Project archive/delete and environment governance.
 - Credential lifecycle against a real provider.
 - Distributed rate limits against the connected Supabase database.
