@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- external provider JSON is intentionally normalized at the boundary. */
 // AI provider abstraction with full BYOK support.
 //
 // Two ways to supply credentials:
@@ -11,7 +12,8 @@
 // Keys sent by the client are used ONLY to make the outbound request for that
 // single call. They are never written to disk, a database, or a log line.
 
-export type KnownProvider = "openrouter" | "openai" | "groq" | "anthropic" | "google";
+export type KnownProvider =
+  "openrouter" | "openai" | "groq" | "anthropic" | "google";
 export type ProviderId = KnownProvider | "custom" | "ollama" | "lmstudio";
 
 type Kind = "openai" | "anthropic" | "google";
@@ -118,10 +120,12 @@ export interface ResolvedConfig {
 
 /** Which known providers have a usable server-side env key. */
 export function availableProviders(): KnownProvider[] {
-  return (Object.keys(PRESETS) as ProviderId[]).filter((p): p is KnownProvider => {
-    const preset = PRESETS[p];
-    return !!preset.envKey && !!process.env[preset.envKey];
-  }) as KnownProvider[];
+  return (Object.keys(PRESETS) as ProviderId[]).filter(
+    (p): p is KnownProvider => {
+      const preset = PRESETS[p];
+      return !!preset.envKey && !!process.env[preset.envKey];
+    },
+  ) as KnownProvider[];
 }
 
 export function providerCatalog() {
@@ -136,13 +140,17 @@ export function providerCatalog() {
 }
 
 /** Resolve a runnable config from an optional client credential, falling back to env vars. */
-export function resolveConfig(cred?: Credential | null, fallbackProvider?: string): ResolvedConfig {
+export function resolveConfig(
+  cred?: Credential | null,
+  fallbackProvider?: string,
+): ResolvedConfig {
   if (cred && cred.provider) {
     const preset = PRESETS[cred.provider];
     if (!preset) throw new Error(`Unknown provider "${cred.provider}".`);
     const baseUrl = (cred.baseUrl || preset.baseUrl).replace(/\/+$/, "");
     if (!baseUrl) throw new Error("A base URL is required for this provider.");
-    const key = cred.apiKey || (preset.envKey ? process.env[preset.envKey] : undefined);
+    const key =
+      cred.apiKey || (preset.envKey ? process.env[preset.envKey] : undefined);
     if (preset.needsKey && !key) {
       throw new Error(`${preset.label} requires an API key.`);
     }
@@ -160,7 +168,9 @@ export function resolveConfig(cred?: Credential | null, fallbackProvider?: strin
   const avail = availableProviders();
   const envDefault = process.env.AI_PROVIDER as KnownProvider | undefined;
   const chosen =
-    (fallbackProvider && avail.includes(fallbackProvider as KnownProvider) && (fallbackProvider as KnownProvider)) ||
+    (fallbackProvider &&
+      avail.includes(fallbackProvider as KnownProvider) &&
+      (fallbackProvider as KnownProvider)) ||
     (envDefault && avail.includes(envDefault) && envDefault) ||
     avail[0];
   if (!chosen) {
@@ -202,13 +212,25 @@ export interface AiResponse {
   source: "byok" | "env";
 }
 
-function buildMessages(req: AiRequest): { system: string; turns: ChatMessage[] } {
+function buildMessages(req: AiRequest): {
+  system: string;
+  turns: ChatMessage[];
+} {
   if (req.messages && req.messages.length) {
-    const sys = req.messages.filter((m) => m.role === "system").map((m) => m.content).join("\n\n") || req.system || "";
+    const sys =
+      req.messages
+        .filter((m) => m.role === "system")
+        .map((m) => m.content)
+        .join("\n\n") ||
+      req.system ||
+      "";
     const turns = req.messages.filter((m) => m.role !== "system");
     return { system: sys, turns };
   }
-  return { system: req.system || "", turns: [{ role: "user", content: req.user || "" }] };
+  return {
+    system: req.system || "",
+    turns: [{ role: "user", content: req.user || "" }],
+  };
 }
 
 export async function generateText(req: AiRequest): Promise<AiResponse> {
@@ -221,10 +243,42 @@ export async function generateText(req: AiRequest): Promise<AiResponse> {
   const timer = setTimeout(() => controller.abort(), 55000);
   try {
     let text: string;
-    if (cfg.kind === "anthropic") text = await callAnthropic(cfg, model, system, turns, maxTokens, temperature, controller.signal);
-    else if (cfg.kind === "google") text = await callGoogle(cfg, model, system, turns, maxTokens, temperature, controller.signal);
-    else text = await callOpenAiCompatible(cfg, model, system, turns, maxTokens, temperature, controller.signal);
-    return { text: text.trim(), provider: cfg.provider, model, source: cfg.source };
+    if (cfg.kind === "anthropic")
+      text = await callAnthropic(
+        cfg,
+        model,
+        system,
+        turns,
+        maxTokens,
+        temperature,
+        controller.signal,
+      );
+    else if (cfg.kind === "google")
+      text = await callGoogle(
+        cfg,
+        model,
+        system,
+        turns,
+        maxTokens,
+        temperature,
+        controller.signal,
+      );
+    else
+      text = await callOpenAiCompatible(
+        cfg,
+        model,
+        system,
+        turns,
+        maxTokens,
+        temperature,
+        controller.signal,
+      );
+    return {
+      text: text.trim(),
+      provider: cfg.provider,
+      model,
+      source: cfg.source,
+    };
   } finally {
     clearTimeout(timer);
   }
@@ -239,7 +293,10 @@ async function callOpenAiCompatible(
   temperature: number,
   signal: AbortSignal,
 ): Promise<string> {
-  const messages = [...(system ? [{ role: "system", content: system }] : []), ...turns];
+  const messages = [
+    ...(system ? [{ role: "system", content: system }] : []),
+    ...turns,
+  ];
   const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
     method: "POST",
     signal,
@@ -249,9 +306,17 @@ async function callOpenAiCompatible(
       "HTTP-Referer": "https://github.com/dejio-cwd/webops-ai",
       "X-Title": "WebOps AI",
     },
-    body: JSON.stringify({ model, max_tokens: maxTokens, temperature, messages }),
+    body: JSON.stringify({
+      model,
+      max_tokens: maxTokens,
+      temperature,
+      messages,
+    }),
   });
-  if (!res.ok) throw new Error(`${cfg.provider} request failed with status ${res.status}.`);
+  if (!res.ok)
+    throw new Error(
+      `${cfg.provider} request failed with status ${res.status}.`,
+    );
   const data = await res.json();
   return data.choices?.[0]?.message?.content ?? "";
 }
@@ -278,12 +343,18 @@ async function callAnthropic(
       max_tokens: maxTokens,
       temperature,
       system,
-      messages: turns.map((t) => ({ role: t.role === "assistant" ? "assistant" : "user", content: t.content })),
+      messages: turns.map((t) => ({
+        role: t.role === "assistant" ? "assistant" : "user",
+        content: t.content,
+      })),
     }),
   });
-  if (!res.ok) throw new Error(`Anthropic request failed with status ${res.status}.`);
+  if (!res.ok)
+    throw new Error(`Anthropic request failed with status ${res.status}.`);
   const data = await res.json();
-  return (data.content || []).map((c: { text?: string }) => c.text || "").join("");
+  return (data.content || [])
+    .map((c: { text?: string }) => c.text || "")
+    .join("");
 }
 
 async function callGoogle(
@@ -301,13 +372,19 @@ async function callGoogle(
     headers: { "Content-Type": "application/json", "x-goog-api-key": cfg.key! },
     body: JSON.stringify({
       systemInstruction: system ? { parts: [{ text: system }] } : undefined,
-      contents: turns.map((t) => ({ role: t.role === "assistant" ? "model" : "user", parts: [{ text: t.content }] })),
+      contents: turns.map((t) => ({
+        role: t.role === "assistant" ? "model" : "user",
+        parts: [{ text: t.content }],
+      })),
       generationConfig: { temperature, maxOutputTokens: maxTokens },
     }),
   });
-  if (!res.ok) throw new Error(`Google AI request failed with status ${res.status}.`);
+  if (!res.ok)
+    throw new Error(`Google AI request failed with status ${res.status}.`);
   const data = await res.json();
-  return (data.candidates?.[0]?.content?.parts || []).map((p: { text?: string }) => p.text || "").join("");
+  return (data.candidates?.[0]?.content?.parts || [])
+    .map((p: { text?: string }) => p.text || "")
+    .join("");
 }
 
 export interface ModelInfo {
@@ -319,7 +396,10 @@ export interface ModelInfo {
 }
 
 /** Live model listing for a resolved provider config. Best-effort — never throws. */
-export async function listModels(cred?: Credential | null, fallbackProvider?: string): Promise<ModelInfo[]> {
+export async function listModels(
+  cred?: Credential | null,
+  fallbackProvider?: string,
+): Promise<ModelInfo[]> {
   try {
     const cfg = resolveConfigForListing(cred, fallbackProvider);
     if (!cfg) return [];
@@ -332,15 +412,26 @@ export async function listModels(cred?: Credential | null, fallbackProvider?: st
 }
 
 // Listing should work even without a key for providers that allow it (OpenRouter, local servers).
-function resolveConfigForListing(cred?: Credential | null, fallbackProvider?: string): ResolvedConfig | null {
+function resolveConfigForListing(
+  cred?: Credential | null,
+  fallbackProvider?: string,
+): ResolvedConfig | null {
   try {
     if (cred && cred.provider) {
       const preset = PRESETS[cred.provider];
       if (!preset) return null;
       const baseUrl = (cred.baseUrl || preset.baseUrl).replace(/\/+$/, "");
       if (!baseUrl) return null;
-      const key = cred.apiKey || (preset.envKey ? process.env[preset.envKey] : undefined);
-      return { provider: cred.provider, kind: preset.kind, baseUrl, key, model: cred.model || preset.defaultModel, source: cred.apiKey ? "byok" : "env" };
+      const key =
+        cred.apiKey || (preset.envKey ? process.env[preset.envKey] : undefined);
+      return {
+        provider: cred.provider,
+        kind: preset.kind,
+        baseUrl,
+        key,
+        model: cred.model || preset.defaultModel,
+        source: cred.apiKey ? "byok" : "env",
+      };
     }
     return resolveConfig(null, fallbackProvider);
   } catch {
@@ -348,7 +439,9 @@ function resolveConfigForListing(cred?: Credential | null, fallbackProvider?: st
   }
 }
 
-async function listOpenAiCompatibleModels(cfg: ResolvedConfig): Promise<ModelInfo[]> {
+async function listOpenAiCompatibleModels(
+  cfg: ResolvedConfig,
+): Promise<ModelInfo[]> {
   const res = await fetch(`${cfg.baseUrl}/models`, {
     headers: cfg.key ? { Authorization: `Bearer ${cfg.key}` } : {},
     signal: AbortSignal.timeout(10000),
@@ -360,8 +453,14 @@ async function listOpenAiCompatibleModels(cfg: ResolvedConfig): Promise<ModelInf
     id: m.id || m.name,
     label: m.name || m.id,
     contextLength: m.context_length ?? m.context_window,
-    free: cfg.provider === "openrouter" ? Number(m.pricing?.prompt || 1) === 0 && Number(m.pricing?.completion || 1) === 0 : undefined,
-    vision: Array.isArray(m.architecture?.input_modalities) ? m.architecture.input_modalities.includes("image") : undefined,
+    free:
+      cfg.provider === "openrouter"
+        ? Number(m.pricing?.prompt || 1) === 0 &&
+          Number(m.pricing?.completion || 1) === 0
+        : undefined,
+    vision: Array.isArray(m.architecture?.input_modalities)
+      ? m.architecture.input_modalities.includes("image")
+      : undefined,
   }));
 }
 
@@ -373,16 +472,24 @@ async function listAnthropicModels(cfg: ResolvedConfig): Promise<ModelInfo[]> {
   });
   if (!res.ok) return [];
   const payload = await res.json();
-  return (payload.data || []).map((m: any) => ({ id: m.id, label: m.display_name || m.id }));
+  return (payload.data || []).map((m: any) => ({
+    id: m.id,
+    label: m.display_name || m.id,
+  }));
 }
 
 async function listGoogleModels(cfg: ResolvedConfig): Promise<ModelInfo[]> {
   if (!cfg.key) return [];
-  const res = await fetch(`${cfg.baseUrl}/models`, { headers: { "x-goog-api-key": cfg.key }, signal: AbortSignal.timeout(10000) });
+  const res = await fetch(`${cfg.baseUrl}/models`, {
+    headers: { "x-goog-api-key": cfg.key },
+    signal: AbortSignal.timeout(10000),
+  });
   if (!res.ok) return [];
   const payload = await res.json();
   return (payload.models || [])
-    .filter((m: any) => (m.supportedGenerationMethods || []).includes("generateContent"))
+    .filter((m: any) =>
+      (m.supportedGenerationMethods || []).includes("generateContent"),
+    )
     .map((m: any) => ({
       id: String(m.name || "").replace(/^models\//, ""),
       label: m.displayName || m.name,
@@ -405,15 +512,32 @@ export async function testCredential(cred: Credential): Promise<TestResult> {
     const cfg = resolveConfig(cred);
     const models = await listModels(cred);
     if (models.length > 0) {
-      return { ok: true, message: `Connected. ${models.length} model(s) available.`, latencyMs: Date.now() - started, modelsFound: models.length, provider: cfg.provider };
+      return {
+        ok: true,
+        message: `Connected. ${models.length} model(s) available.`,
+        latencyMs: Date.now() - started,
+        modelsFound: models.length,
+        provider: cfg.provider,
+      };
     }
     // Some providers don't expose a list endpoint (or it needs no auth check) — do a tiny live call instead.
-    await generateText({ system: "Reply with the single word OK.", user: "Say OK.", credential: cred, maxTokens: 5 });
-    return { ok: true, message: "Connected (verified with a live test call).", latencyMs: Date.now() - started, provider: cfg.provider };
+    await generateText({
+      system: "Reply with the single word OK.",
+      user: "Say OK.",
+      credential: cred,
+      maxTokens: 5,
+    });
+    return {
+      ok: true,
+      message: "Connected (verified with a live test call).",
+      latencyMs: Date.now() - started,
+      provider: cfg.provider,
+    };
   } catch (err) {
     return {
       ok: false,
-      message: "Connection failed. Verify the provider, key, endpoint, and model policy.",
+      message:
+        "Connection failed. Verify the provider, key, endpoint, and model policy.",
       latencyMs: Date.now() - started,
       provider: cred.provider,
     };
