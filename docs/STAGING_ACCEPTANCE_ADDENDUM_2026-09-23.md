@@ -88,3 +88,26 @@ The positive verified-fix, real-provider AI, controlled-domain/robots, scheduler
 - At this check, PR #1 had zero review threads and zero review comments. An automated review was requested, but no review result had returned at the time of this evidence capture. GitHub check-run visibility remains unavailable under the configured token (previous HTTP 403), so neither CI nor security scanning was inferred from Vercel's deployment status.
 
 External gates remain external: human code review; usable GitHub checks/CI and whole-repository secret scanning; a verified controlled domain with robots permission and a remediated finding; a real provider credential and authorized test spend; a scheduler secret and a production-approved scheduler target; and the policy/infrastructure decisions and environments for SSO/SCIM, retention/regional controls, load, security, DR, and complete accessibility certification. No merge or production deployment occurred.
+
+## Current Preview acceptance continuation — no Production action
+
+### GitHub integration evidence boundary
+
+- The connected GitHub integration successfully read private repository branch metadata, `README.md`, and draft PR #1. Its Checks request against `GET /repos/dejio-cwd/webops-ai/commits/b1ca817af9466ea423161fd7c6ab4fef1d2e4cd1/check-runs?page=1&per_page=30` returned `403 Resource not accessible by personal access token`. This is recorded as an external MCP/GitHub integration limitation. No token was created, replaced, changed, or exposed.
+- Actions workflow-run evidence is **unverified**: the connected MCP exposes no authenticated Actions workflow-runs operation or generic authenticated REST operation, and no credential handle is available to the execution environment. No status was inferred from Vercel.
+
+### Credential vault lifecycle — isolated synthetic credential
+
+- With Preview health reporting vault readiness, an isolated tenant-B owner created a newly generated non-provider staging credential (HTTP 201), observed only its hint/metadata on read (HTTP 200; no raw or encrypted secret field), and confirmed model allowlist `gpt-4o-mini` and `staging` scope persistence.
+- Rotation succeeded (HTTP 200; `rotated_at` present; active status), while an attempted rotation through the CWD tenant returned HTTP 403. Revocation succeeded (HTTP 200; `revoked_at` present; revoked status). The disposable synthetic credential was left revoked. This is lifecycle/isolation evidence only; real provider connectivity and generated output remain blocked on an authorized provider credential and test budget.
+
+### Monitoring, scheduler, and tenant safety
+
+- Static source review found current scheduler controls for `CRON_SECRET` authorization, verified-domain gating, `respectRobots: true`, atomic due-row claims, failure-alert handling, and retry reporting. Runtime staging check in isolated tenant B saved one disabled weekly monitor (HTTP 200), retained one disabled configuration on read (HTTP 200), rejected enabling the unverified project (HTTP 409), and rejected an ordinary session at `/api/monitoring/run` (HTTP 401). No scheduler secret, external scheduler call, crawl, or robots bypass was used.
+- A cross-tenant mutation retest used tenant B's workspace ID with a CWD project ID. PATCH and DELETE each returned HTTP 404; a final project read confirmed the CWD project remained present and `staging`.
+- Positive Fix Center remediation/follow-up acceptance is blocked: available QA targets are not a controlled remediable domain, and Nyrius remains unverified with robots restrictions. No crawl policy was bypassed.
+
+### Explicit blockers not counted as passed
+
+- Supabase migration execution and full RLS/constraint inspection require approved database-console or migration-runner access; table-readiness health is not treated as full migration acceptance.
+- Real AI/provider, verified controlled domain/remediation, live scheduler execution, Actions workflow evidence, Checks API evidence, and Production acceptance remain unverified. PR #1 remains Draft; no merge or Production deployment occurred.
