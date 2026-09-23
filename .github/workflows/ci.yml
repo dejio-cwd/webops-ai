@@ -27,6 +27,16 @@ jobs:
       - run: npm run build
         env:
           SECURITY_ENFORCE_AUTH: "false"
+      - name: Collect lint diagnostics
+        if: always()
+        run: npm run lint -- --format json > lint-report.json || true
+      - name: Upload lint diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-lint-diagnostics
+          path: web/lint-report.json
+          if-no-files-found: ignore
 
   secrets:
     runs-on: ubuntu-latest
