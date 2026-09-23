@@ -35,8 +35,8 @@ export async function GET(request: Request) {
   if (!membershipResponse.ok) return Response.json({ error: "Unable to verify workspace access." }, { status: 502 });
   const memberships = await membershipResponse.json() as Array<{ organization_id: string }>;
   const organizationIds = memberships.map((item) => item.organization_id).filter((id) => /^[0-9a-f-]{36}$/i.test(id));
-  const queries = [`owner_id=eq.${encodeURIComponent(actor.id)}`];
-  if (organizationIds.length) queries.push(`organization_id=in.(${organizationIds.join(",")})`);
+  const queries = [`owner_id.eq.${encodeURIComponent(actor.id)}`];
+  if (organizationIds.length) queries.push(`organization_id.in.(${organizationIds.join(",")})`);
   const endpoint = `${config.url}/rest/v1/projects?select=id,name,domain,environment,verified_at,organization_id,created_at&or=(${queries.join(",")})&order=created_at.desc`;
   const upstream = await fetch(endpoint, { headers: headers(config.serviceKey), cache: "no-store" });
   if (!upstream.ok) return Response.json({ error: "Unable to load projects." }, { status: 502 });
