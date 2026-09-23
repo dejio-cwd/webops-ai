@@ -1108,7 +1108,7 @@ function FixCenter({
   );
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   useEffect(() => {
-    fetch(`/api/fixes?auditId=${encodeURIComponent(audit.auditId)}`, {
+    fetch(`/api/fixes?auditId=${encodeURIComponent(audit.auditId)}${projectId ? `&projectId=${encodeURIComponent(projectId)}` : ""}`, {
       cache: "no-store",
     })
       .then(async (response) => {
@@ -1126,7 +1126,7 @@ function FixCenter({
         );
       })
       .catch(() => null);
-  }, [audit.auditId]);
+  }, [audit.auditId, projectId]);
   const [saveError, setSaveError] = useState("");
   const [saving, setSaving] = useState<string | null>(null);
   const [verifyId, setVerifyId] = useState<string | null>(null);

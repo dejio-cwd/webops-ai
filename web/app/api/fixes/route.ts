@@ -16,7 +16,7 @@ function headers(key: string, prefer?: string) {
   };
 }
 
-async function canManageProject(
+async function projectRole(
   value: Config,
   projectId: string,
   actorId: string,
@@ -33,9 +33,9 @@ async function canManageProject(
       }>)
     : [];
   const project = projects[0];
-  if (!project) return false;
-  if (project.owner_id === actorId) return true;
-  if (!project.organization_id) return false;
+  if (!project) return null;
+  if (project.owner_id === actorId) return "owner";
+  if (!project.organization_id) return null;
   const memberResponse = await fetch(
     `${value.url}/rest/v1/organization_members?select=role&organization_id=eq.${encodeURIComponent(project.organization_id)}&user_id=eq.${encodeURIComponent(actorId)}&limit=1`,
     { headers: headers(value.key), cache: "no-store" },
@@ -43,7 +43,7 @@ async function canManageProject(
   const members = memberResponse.ok
     ? ((await memberResponse.json()) as Array<{ role: string }>)
     : [];
-  return ["owner", "admin", "developer"].includes(members[0]?.role || "");
+  return members[0]?.role || null;
 }
 
 export async function GET(request: Request) {
@@ -60,8 +60,15 @@ export async function GET(request: Request) {
     );
   const value = config();
   if (!value) return Response.json({ fixes: [] });
-  const auditId = new URL(request.url).searchParams.get("auditId") || "";
-  const endpoint = `${value.url}/rest/v1/fix_records?select=id,audit_id,opportunity_id,status,created_at,updated_at&owner_id=eq.${encodeURIComponent(actor.id)}${auditId ? `&audit_id=eq.${encodeURIComponent(auditId)}` : ""}&order=updated_at.desc&limit=100`;
+  const params = new URL(request.url).searchParams;
+  const auditId = params.get("auditId") || "";
+  const projectId = params.get("projectId") || "";
+  if (projectId && !(await projectRole(value, projectId, actor.id)))
+    return Response.json({ error: "Project access denied." }, { status: 403 });
+  const scope = projectId
+    ? `&project_id=eq.${encodeURIComponent(projectId)}`
+    : `&owner_id=eq.${encodeURIComponent(actor.id)}`;
+  const endpoint = `${value.url}/rest/v1/fix_records?select=id,project_id,audit_id,opportunity_id,status,created_at,updated_at${scope}${auditId ? `&audit_id=eq.${encodeURIComponent(auditId)}` : ""}&order=updated_at.desc&limit=100`;
   const response = await fetch(endpoint, {
     headers: headers(value.key),
     cache: "no-store",
@@ -116,7 +123,7 @@ export async function POST(request: Request) {
   }
   if (
     body.projectId &&
-    !(await canManageProject(value, body.projectId, actor.id))
+    !["owner", "admin", "developer"].includes(await projectRole(value, body.projectId, actor.id) || "")
   )
     return Response.json(
       {
@@ -137,13 +144,17 @@ export async function POST(request: Request) {
     );
   // The service role bypasses RLS: validate the audit and project association
   // before allowing a write. A supplied project ID alone is not proof of scope.
+  const auditScope = body.projectId
+    ? `&project_id=eq.${encodeURIComponent(body.projectId)}`
+    : `&owner_id=eq.${encodeURIComponent(actor.id)}`;
   const auditResponse = await fetch(
-    `${value.url}/rest/v1/audit_runs?select=audit_id,project_id,created_at,status,result&owner_id=eq.${encodeURIComponent(actor.id)}&audit_id=eq.${encodeURIComponent(body.auditId)}&limit=1`,
+    `${value.url}/rest/v1/audit_runs?select=owner_id,audit_id,project_id,created_at,status,result${auditScope}&audit_id=eq.${encodeURIComponent(body.auditId)}&limit=1`,
     { headers: headers(value.key), cache: "no-store" },
   );
   if (!auditResponse.ok)
     return Response.json({ error: "Unable to validate audit scope." }, { status: 502 });
   const baselines = (await auditResponse.json()) as Array<{
+    owner_id: string;
     project_id: string | null;
     created_at: string;
     status: string;
@@ -158,7 +169,7 @@ export async function POST(request: Request) {
     if (!body.verificationAuditId || !body.verificationNote?.trim() || !body.rollbackPlan?.trim())
       return Response.json({ error: "A later audit, verification note, and rollback plan are required." }, { status: 400 });
     const existingResponse = await fetch(
-      `${value.url}/rest/v1/fix_records?select=status&owner_id=eq.${encodeURIComponent(actor.id)}&audit_id=eq.${encodeURIComponent(body.auditId)}&opportunity_id=eq.${encodeURIComponent(body.opportunityId)}&limit=1`,
+      `${value.url}/rest/v1/fix_records?select=status&owner_id=eq.${encodeURIComponent(baseline.owner_id)}&audit_id=eq.${encodeURIComponent(body.auditId)}&opportunity_id=eq.${encodeURIComponent(body.opportunityId)}&limit=1`,
       { headers: headers(value.key), cache: "no-store" },
     );
     if (!existingResponse.ok) return Response.json({ error: "Unable to validate fix state." }, { status: 502 });
@@ -166,7 +177,7 @@ export async function POST(request: Request) {
     if (existing[0]?.status !== "ready")
       return Response.json({ error: "Only ready fixes can be verified." }, { status: 409 });
     const followupResponse = await fetch(
-      `${value.url}/rest/v1/audit_runs?select=audit_id,project_id,created_at,status,result&owner_id=eq.${encodeURIComponent(actor.id)}&audit_id=eq.${encodeURIComponent(body.verificationAuditId)}&limit=1`,
+      `${value.url}/rest/v1/audit_runs?select=audit_id,project_id,created_at,status,result${auditScope}&audit_id=eq.${encodeURIComponent(body.verificationAuditId)}&limit=1`,
       { headers: headers(value.key), cache: "no-store" },
     );
     if (!followupResponse.ok) return Response.json({ error: "Unable to validate follow-up audit." }, { status: 502 });
@@ -194,7 +205,7 @@ export async function POST(request: Request) {
       "resolution=merge-duplicates,return=representation",
     ),
     body: JSON.stringify({
-      owner_id: actor.id,
+      owner_id: baseline.owner_id,
       audit_id: body.auditId,
       project_id: body.projectId || null,
       opportunity_id: body.opportunityId,
