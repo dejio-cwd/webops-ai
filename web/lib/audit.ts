@@ -3,18 +3,19 @@
 
 import { crawlSite, type CrawlOptions } from "./crawler";
 import { runRules } from "./rules";
+import { runIntelligenceRules } from "./intelligence";
 import { computeHealth } from "./score";
 import { buildOpportunities } from "./opportunities";
 import type { AuditResult, Finding } from "./types";
 
-export const AUDIT_ENGINE_VERSION = "1.0.0";
+export const AUDIT_ENGINE_VERSION = "1.1.0";
 
 export async function runAudit(
   url: string,
   options: CrawlOptions = {},
 ): Promise<AuditResult> {
   const { stats, pages } = await crawlSite(url, options);
-  const findings = runRules(pages, stats, url);
+  const findings = [...runRules(pages, stats, url), ...runIntelligenceRules(pages)];
   const health = computeHealth(findings, stats.pagesCrawled);
   const opportunities = buildOpportunities(findings, stats.pagesCrawled);
 
