@@ -3,6 +3,7 @@ export type ProjectAccess = {
   id: string;
   owner_id: string;
   organization_id: string | null;
+  verified_at: string | null;
   role: string;
 };
 type Config = { url: string; key: string };
@@ -12,7 +13,7 @@ function headers(key: string) {
 export async function projectAccess(config: Config, projectId: string, actorId: string): Promise<ProjectAccess | null> {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(projectId)) return null;
   const projectResponse = await fetch(
-    `${config.url}/rest/v1/projects?select=id,owner_id,organization_id&id=eq.${encodeURIComponent(projectId)}&limit=1`,
+    `${config.url}/rest/v1/projects?select=id,owner_id,organization_id,verified_at&id=eq.${encodeURIComponent(projectId)}&limit=1`,
     { headers: headers(config.key), cache: "no-store" },
   );
   if (!projectResponse.ok) return null;

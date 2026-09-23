@@ -15,14 +15,14 @@ const alerts = await load("../app/api/monitoring/alerts/route.ts", guard);
 const projectId = "11111111-1111-4111-8111-111111111111";
 const otherProject = "22222222-2222-4222-8222-222222222222";
 const respond = data => Response.json(data);
-function setup(role = "viewer") {
+function setup(role = "viewer", verified = true) {
   process.env.NEXT_PUBLIC_SUPABASE_URL = "https://test.invalid";
   process.env.SUPABASE_SERVICE_ROLE_KEY = "test-only";
   const calls = [];
   globalThis.fetch = async (input, init = {}) => {
     const url = String(input);
     calls.push({ url, method: init.method || "GET", body: init.body });
-    if (url.includes("/projects?")) return respond([{ id: url.includes(otherProject) ? otherProject : projectId, owner_id: "owner-1", organization_id: "org-1" }]);
+    if (url.includes("/projects?")) return respond([{ id: url.includes(otherProject) ? otherProject : projectId, owner_id: "owner-1", organization_id: "org-1", verified_at: verified ? "2026-09-22T00:00:00Z" : null }]);
     if (url.includes("/organization_members?")) return respond(role ? [{ role }] : []);
     if (url.includes("/monitoring_configs?")) return respond([{ project_id: projectId, owner_id: "owner-1" }]);
     if (url.includes("/monitoring_configs?on_conflict=owner_id,project_id") && init.method === "POST") return respond([{ project_id: projectId }]);
@@ -55,6 +55,13 @@ test("nonmembers cannot read another tenant's project data", async () => {
   setup(null);
   assert.equal((await monitoring.GET(request(`/api/monitoring?projectId=${otherProject}`))).status, 403);
   assert.equal((await alerts.GET(request(`/api/monitoring/alerts?projectId=${otherProject}`))).status, 403);
+});
+
+test("unverified projects cannot enable scheduled monitoring", async () => {
+  const calls = setup("developer", false);
+  const response = await monitoring.POST(request("/api/monitoring", "developer-2", "POST", { projectId, cadence: "daily", enabled: true }));
+  assert.equal(response.status, 409);
+  assert.equal(calls.some(c => c.method === "POST"), false);
 });
 
 test("developer can manage canonical owner monitoring and acknowledge alerts", async () => {

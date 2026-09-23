@@ -91,6 +91,8 @@ export async function POST(request: Request) {
       { error: "Owner, admin, or developer access required." },
       { status: 403 },
     );
+  if (body.enabled !== false && !access.verified_at)
+    return Response.json({ error: "Verify project ownership before enabling monitoring." }, { status: 409 });
   const response = await fetch(`${value.url}/rest/v1/monitoring_configs?on_conflict=owner_id,project_id`, {
     method: "POST",
     headers: headers(
