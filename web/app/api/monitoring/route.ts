@@ -1,4 +1,5 @@
 import { guardApiRequest, isGuardResponse } from "@/lib/security/api-guard";
+import { projectAccess, canManageProject } from "@/lib/security/project-access";
 type Config = { url: string; key: string };
 function config(): Config | null {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -12,31 +13,6 @@ function headers(key: string, prefer?: string) {
     "Content-Type": "application/json",
     ...(prefer ? { Prefer: prefer } : {}),
   };
-}
-async function canManage(value: Config, projectId: string, userId: string) {
-  const projectResponse = await fetch(
-    `${value.url}/rest/v1/projects?select=owner_id,organization_id&id=eq.${encodeURIComponent(projectId)}&limit=1`,
-    { headers: headers(value.key), cache: "no-store" },
-  );
-  const project = projectResponse.ok
-    ? (
-        (await projectResponse.json()) as Array<{
-          owner_id: string;
-          organization_id: string | null;
-        }>
-      )[0]
-    : null;
-  if (!project) return false;
-  if (project.owner_id === userId) return true;
-  if (!project.organization_id) return false;
-  const memberResponse = await fetch(
-    `${value.url}/rest/v1/organization_members?select=role&organization_id=eq.${encodeURIComponent(project.organization_id)}&user_id=eq.${encodeURIComponent(userId)}&limit=1`,
-    { headers: headers(value.key), cache: "no-store" },
-  );
-  const member = memberResponse.ok
-    ? ((await memberResponse.json()) as Array<{ role: string }>)[0]
-    : null;
-  return ["owner", "admin", "developer"].includes(member?.role || "");
 }
 export async function GET(request: Request) {
   const actor = await guardApiRequest(request, {
@@ -53,8 +29,13 @@ export async function GET(request: Request) {
   const value = config();
   if (!value) return Response.json({ monitors: [] });
   const projectId = new URL(request.url).searchParams.get("projectId") || "";
+  if (projectId && !(await projectAccess(value, projectId, actor.id)))
+    return Response.json({ error: "Project access denied." }, { status: 403 });
+  const scope = projectId
+    ? `&project_id=eq.${encodeURIComponent(projectId)}`
+    : `&owner_id=eq.${encodeURIComponent(actor.id)}`;
   const response = await fetch(
-    `${value.url}/rest/v1/monitoring_configs?select=id,project_id,cadence,enabled,last_run_at,next_run_at,created_at,updated_at&owner_id=eq.${encodeURIComponent(actor.id)}${projectId ? `&project_id=eq.${encodeURIComponent(projectId)}` : ""}&order=created_at.desc`,
+    `${value.url}/rest/v1/monitoring_configs?select=id,project_id,cadence,enabled,last_run_at,next_run_at,created_at,updated_at${scope}&order=created_at.desc`,
     { headers: headers(value.key), cache: "no-store" },
   );
   if (!response.ok)
@@ -104,19 +85,20 @@ export async function POST(request: Request) {
       { error: "Project and valid cadence are required." },
       { status: 400 },
     );
-  if (!(await canManage(value, projectId, actor.id)))
+  const access = await projectAccess(value, projectId, actor.id);
+  if (!access || !canManageProject(access.role))
     return Response.json(
       { error: "Owner, admin, or developer access required." },
       { status: 403 },
     );
-  const response = await fetch(`${value.url}/rest/v1/monitoring_configs`, {
+  const response = await fetch(`${value.url}/rest/v1/monitoring_configs?on_conflict=owner_id,project_id`, {
     method: "POST",
     headers: headers(
       value.key,
       "resolution=merge-duplicates,return=representation",
     ),
     body: JSON.stringify({
-      owner_id: actor.id,
+      owner_id: access.owner_id,
       project_id: projectId,
       cadence,
       enabled: body.enabled !== false,

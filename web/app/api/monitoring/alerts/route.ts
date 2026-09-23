@@ -1,4 +1,5 @@
 import { guardApiRequest, isGuardResponse } from "@/lib/security/api-guard";
+import { projectAccess, canManageProject } from "@/lib/security/project-access";
 type Config = { url: string; key: string };
 function config(): Config | null {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -28,8 +29,13 @@ export async function GET(request: Request) {
   const value = config();
   if (!value) return Response.json({ alerts: [] });
   const projectId = new URL(request.url).searchParams.get("projectId") || "";
+  if (projectId && !(await projectAccess(value, projectId, actor.id)))
+    return Response.json({ error: "Project access denied." }, { status: 403 });
+  const scope = projectId
+    ? `&project_id=eq.${encodeURIComponent(projectId)}`
+    : `&owner_id=eq.${encodeURIComponent(actor.id)}`;
   const response = await fetch(
-    `${value.url}/rest/v1/monitoring_alerts?select=id,project_id,audit_id,kind,severity,summary,status,created_at,resolved_at&owner_id=eq.${encodeURIComponent(actor.id)}${projectId ? `&project_id=eq.${encodeURIComponent(projectId)}` : ""}&order=created_at.desc&limit=50`,
+    `${value.url}/rest/v1/monitoring_alerts?select=id,project_id,audit_id,kind,severity,summary,status,created_at,resolved_at${scope}&order=created_at.desc&limit=50`,
     { headers: headers(value.key), cache: "no-store" },
   );
   if (!response.ok)
@@ -76,8 +82,19 @@ export async function PATCH(request: Request) {
       { error: "Alert and valid status are required." },
       { status: 400 },
     );
+  const alertResponse = await fetch(
+    `${value.url}/rest/v1/monitoring_alerts?select=project_id&id=eq.${encodeURIComponent(body.alertId)}&limit=1`,
+    { headers: headers(value.key), cache: "no-store" },
+  );
+  if (!alertResponse.ok)
+    return Response.json({ error: "Unable to load alert." }, { status: 502 });
+  const alert = (await alertResponse.json() as Array<{ project_id: string }>)[0];
+  if (!alert) return Response.json({ error: "Alert not found." }, { status: 404 });
+  const access = await projectAccess(value, alert.project_id, actor.id);
+  if (!access || !canManageProject(access.role))
+    return Response.json({ error: "Alert access denied." }, { status: 403 });
   const response = await fetch(
-    `${value.url}/rest/v1/monitoring_alerts?id=eq.${encodeURIComponent(body.alertId)}&owner_id=eq.${encodeURIComponent(actor.id)}`,
+    `${value.url}/rest/v1/monitoring_alerts?id=eq.${encodeURIComponent(body.alertId)}&project_id=eq.${encodeURIComponent(alert.project_id)}`,
     {
       method: "PATCH",
       headers: headers(value.key, "return=representation"),
@@ -91,5 +108,8 @@ export async function PATCH(request: Request) {
   );
   if (!response.ok)
     return Response.json({ error: "Unable to update alert." }, { status: 502 });
-  return Response.json({ alert: (await response.json())[0] || null });
+  const updated = (await response.json() as Array<{ id: string }>)[0];
+  return updated
+    ? Response.json({ alert: updated })
+    : Response.json({ error: "Alert not found." }, { status: 404 });
 }
