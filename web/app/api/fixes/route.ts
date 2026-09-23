@@ -187,7 +187,7 @@ export async function POST(request: Request) {
     const coverage = verificationCoverage(baseline.result, followup.result, body.opportunityId);
     if (!coverage.valid) return Response.json({ error: coverage.reason }, { status: 409 });
   }
-  const response = await fetch(`${value.url}/rest/v1/fix_records`, {
+  const response = await fetch(`${value.url}/rest/v1/fix_records?on_conflict=owner_id,audit_id,opportunity_id`, {
     method: "POST",
     headers: headers(
       value.key,
@@ -214,7 +214,8 @@ export async function POST(request: Request) {
       { status: 502 },
     );
   const fix = (await response.json())[0] || null;
-  if (fix && body.projectId) {
+  if (!fix) return Response.json({ error: "Fix save returned no record." }, { status: 502 });
+  if (body.projectId) {
     const projectResponse = await fetch(
       `${value.url}/rest/v1/projects?select=organization_id&id=eq.${encodeURIComponent(body.projectId)}&limit=1`,
       { headers: headers(value.key), cache: "no-store" },
