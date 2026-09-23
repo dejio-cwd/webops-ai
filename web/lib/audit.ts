@@ -8,13 +8,21 @@ import { computeHealth } from "./score";
 import { buildOpportunities } from "./opportunities";
 import type { AuditResult, Finding } from "./types";
 
-export const AUDIT_ENGINE_VERSION = "1.1.0";
+export const AUDIT_ENGINE_VERSION = "1.1.1";
+
+export class NoCrawlEvidenceError extends Error {
+  constructor() {
+    super("No pages were crawled. The site's robots policy or network access may block this audit.");
+    this.name = "NoCrawlEvidenceError";
+  }
+}
 
 export async function runAudit(
   url: string,
   options: CrawlOptions = {},
 ): Promise<AuditResult> {
   const { stats, pages } = await crawlSite(url, options);
+  if (stats.pagesCrawled === 0) throw new NoCrawlEvidenceError();
   const findings = [...runRules(pages, stats, url), ...runIntelligenceRules(pages)];
   const health = computeHealth(findings, stats.pagesCrawled);
   const opportunities = buildOpportunities(findings, stats.pagesCrawled);

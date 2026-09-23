@@ -75,6 +75,7 @@ export default function Home() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [projectId, setProjectId] = useState("");
   const [environment, setEnvironment] = useState("");
+  const [routeReady, setRouteReady] = useState(false);
   const [comparison, setComparison] = useState<{
     healthScoreDelta: number;
     pagesCrawledDelta: number;
@@ -103,26 +104,33 @@ export default function Home() {
   const loadHistory = useCallback(async () => {
     setHistoryLoading(true);
     try {
-      const res = await fetch("/api/audit", { cache: "no-store" });
+      const res = await fetch(
+        `/api/audit${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ""}`,
+        { cache: "no-store" },
+      );
       if (!res.ok) return;
       const data = await res.json();
       setHistory((data.runs || []) as AuditRunSummary[]);
     } finally {
       setHistoryLoading(false);
     }
-  }, []);
+  }, [projectId]);
 
   useEffect(() => {
-    void loadHistory();
-  }, [loadHistory]);
+    if (routeReady) void loadHistory();
+  }, [loadHistory, routeReady]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const requestedUrl = params.get("url");
     const requestedModule = params.get("module") as Module | null;
     if (requestedUrl) setUrl(requestedUrl);
+    setProjectId(params.get("projectId") || "");
+    const requestedEnvironment = params.get("environment") || "";
+    setEnvironment(["production", "staging", "development"].includes(requestedEnvironment) ? requestedEnvironment : "");
     if (requestedModule && MODULES.includes(requestedModule))
       setActive(requestedModule);
+    setRouteReady(true);
   }, []);
 
   const persistSettings = useCallback((next: AiSettings) => {
@@ -186,7 +194,7 @@ export default function Home() {
     async (beforeId: string) => {
       if (!audit) return;
       const res = await fetch(
-        `/api/audit?before=${encodeURIComponent(beforeId)}&after=${encodeURIComponent(audit.auditId)}`,
+        `/api/audit?before=${encodeURIComponent(beforeId)}&after=${encodeURIComponent(audit.auditId)}${projectId ? `&projectId=${encodeURIComponent(projectId)}` : ""}`,
         { cache: "no-store" },
       );
       const data = await res.json();
@@ -196,7 +204,7 @@ export default function Home() {
       }
       setComparison(data.comparison);
     },
-    [audit],
+    [audit, projectId],
   );
 
   const exportAudit = useCallback(() => {
@@ -236,7 +244,7 @@ export default function Home() {
   const loadHistoricalAudit = useCallback(async (auditId: string) => {
     setError("");
     const res = await fetch(
-      `/api/audit?auditId=${encodeURIComponent(auditId)}`,
+      `/api/audit?auditId=${encodeURIComponent(auditId)}${projectId ? `&projectId=${encodeURIComponent(projectId)}` : ""}`,
       { cache: "no-store" },
     );
     const data = await res.json();
@@ -244,10 +252,14 @@ export default function Home() {
       setError(data?.error || "Unable to load audit.");
       return;
     }
+    if (data.audit?.crawl?.pagesCrawled === 0) {
+      setError("This historical audit crawled no pages and has no valid health score.");
+      return;
+    }
     setAudit(data.audit as AuditResult);
     setUrl(data.audit.crawl.requestedUrl);
     setActive("Overview");
-  }, []);
+  }, [projectId]);
 
   const findingCount = audit?.findings.length ?? 0;
   const oppCount = audit?.opportunities.length ?? 0;
@@ -616,7 +628,7 @@ function AuditHistory({
           </span>
           <span style={{ whiteSpace: "nowrap", color: "var(--muted)" }}>
             {run.summary.pagesCrawled ?? 0} pages · score{" "}
-            {run.summary.healthScore ?? "—"}
+            {run.summary.pagesCrawled ? (run.summary.healthScore ?? "—") : "—"}
           </span>
           {audit && audit.auditId !== run.audit_id && (
             <span

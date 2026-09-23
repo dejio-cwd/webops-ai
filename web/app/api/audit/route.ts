@@ -5,7 +5,7 @@
 // Runs a bounded, deadline-aware crawl entirely within the serverless function.
 // The route is authenticated because crawling is an expensive outbound operation.
 
-import { runAudit } from "@/lib/audit";
+import { runAudit, NoCrawlEvidenceError } from "@/lib/audit";
 import { compareAudits } from "@/lib/audit-comparison";
 import type { AuditResult } from "@/lib/types";
 import { SsrfError } from "@/lib/ssrf";
@@ -55,10 +55,14 @@ export async function GET(request: Request) {
     );
   const searchParams = new URL(request.url).searchParams;
   const auditId = searchParams.get("auditId") || "";
+  const projectId = searchParams.get("projectId") || "";
+  if (projectId && !/^[0-9a-f-]{36}$/i.test(projectId))
+    return Response.json({ error: "Invalid project ID." }, { status: 400 });
+  const projectFilter = projectId ? `&project_id=eq.${encodeURIComponent(projectId)}` : "";
   const beforeId = searchParams.get("before") || "";
   const afterId = searchParams.get("after") || "";
   if (beforeId && afterId) {
-    const comparisonEndpoint = `${config.url}/rest/v1/audit_runs?select=audit_id,result&owner_id=eq.${encodeURIComponent(actor.id)}&audit_id=in.(${encodeURIComponent(beforeId)},${encodeURIComponent(afterId)})`;
+    const comparisonEndpoint = `${config.url}/rest/v1/audit_runs?select=audit_id,result&owner_id=eq.${encodeURIComponent(actor.id)}${projectFilter}&audit_id=in.(${encodeURIComponent(beforeId)},${encodeURIComponent(afterId)})`;
     const comparisonResponse = await fetch(comparisonEndpoint, {
       headers: supabaseHeaders(config.key),
       cache: "no-store",
@@ -87,7 +91,7 @@ export async function GET(request: Request) {
   const select = auditId
     ? "id,url,audit_id,engine_version,status,summary,result,created_at,completed_at"
     : "id,url,audit_id,engine_version,status,summary,created_at,completed_at";
-  const endpoint = `${config.url}/rest/v1/audit_runs?select=${select}&owner_id=eq.${encodeURIComponent(actor.id)}${auditId ? `&audit_id=eq.${encodeURIComponent(auditId)}&limit=1` : "&order=created_at.desc&limit=20"}`;
+  const endpoint = `${config.url}/rest/v1/audit_runs?select=${select}&owner_id=eq.${encodeURIComponent(actor.id)}${projectFilter}${auditId ? `&audit_id=eq.${encodeURIComponent(auditId)}&limit=1` : "&order=created_at.desc&limit=20"}`;
   const response = await fetch(endpoint, {
     headers: supabaseHeaders(config.key),
     cache: "no-store",
@@ -156,15 +160,19 @@ export async function POST(request: Request) {
       : null;
   let associatedProjectId: string | null = null;
   const config = supabaseConfig();
+  if (projectId && !config)
+    return Response.json({ error: "Project service is not configured." }, { status: 503 });
   if (projectId && config) {
     const projectResponse = await fetch(
-      `${config.url}/rest/v1/projects?select=id,owner_id&id=eq.${encodeURIComponent(projectId)}&limit=1`,
+      `${config.url}/rest/v1/projects?select=id,owner_id,domain,environment&id=eq.${encodeURIComponent(projectId)}&limit=1`,
       { headers: supabaseHeaders(config.key), cache: "no-store" },
     );
     const projects = projectResponse.ok
       ? ((await projectResponse.json()) as Array<{
           id: string;
           owner_id: string;
+          domain: string;
+          environment: string;
         }>)
       : [];
     if (projects[0]?.owner_id !== actor.id)
@@ -172,6 +180,13 @@ export async function POST(request: Request) {
         { error: "Project access denied." },
         { status: 403 },
       );
+    let host = "";
+    try { host = new URL(withScheme).hostname.toLowerCase(); } catch { /* rejected below */ }
+    const domain = projects[0].domain.toLowerCase();
+    if (host !== domain && !host.endsWith(`.${domain}`))
+      return Response.json({ error: "Audit URL must match the selected project domain." }, { status: 400 });
+    if (environment && environment !== projects[0].environment)
+      return Response.json({ error: "Audit environment must match the selected project." }, { status: 400 });
     associatedProjectId = projects[0].id;
   }
   const maxPages = clamp(body.maxPages ?? 20, 1, HARD_MAX_PAGES);
@@ -213,7 +228,7 @@ export async function POST(request: Request) {
     }
     return Response.json(result, { headers: { "Cache-Control": "no-store" } });
   } catch (err) {
-    const status = err instanceof SsrfError ? 400 : 500;
+    const status = err instanceof SsrfError ? 400 : err instanceof NoCrawlEvidenceError ? 422 : 500;
     return Response.json(
       { error: err instanceof Error ? err.message : "Audit failed." },
       { status, headers: { "Cache-Control": "no-store" } },
