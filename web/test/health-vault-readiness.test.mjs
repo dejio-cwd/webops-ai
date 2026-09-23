@@ -20,5 +20,23 @@ test("health reports vault ready only when the vault minimum is satisfied", asyn
   const result = await (await GET()).json();
   assert.equal(result.status, "ok");
   assert.equal(result.configuration.credentialVaultReady, true);
+  assert.equal(result.configuration.credentialVaultKeyState, "meets_minimum");
   assert.equal(result.database.requiredTablesReady, true);
+});
+
+test("health distinguishes absent variable from a short runtime value", async () => {
+  delete process.env.CREDENTIAL_ENCRYPTION_KEY;
+  process.env.VERCEL_ENV = "preview";
+  process.env.VERCEL_GIT_COMMIT_REF = "phase-1-production-foundation";
+  let result = await (await GET()).json();
+  assert.equal(result.configuration.credentialVaultKeyState, "missing");
+  assert.equal(result.deployment.target, "preview");
+  assert.equal(result.deployment.branch, "phase-1-production-foundation");
+  process.env.CREDENTIAL_ENCRYPTION_KEY = "";
+  result = await (await GET()).json();
+  assert.equal(result.configuration.credentialVaultKeyState, "empty");
+  process.env.CREDENTIAL_ENCRYPTION_KEY = "short-placeholder";
+  result = await (await GET()).json();
+  assert.equal(result.configuration.credentialVaultKeyState, "below_minimum");
+  assert.equal(JSON.stringify(result).includes("short-placeholder"), false);
 });

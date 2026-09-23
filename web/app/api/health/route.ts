@@ -23,8 +23,16 @@ export async function GET() {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
   );
   const serviceRoleConfigured = Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY);
-  // Match the vault's minimum key requirement without exposing the key or its length.
-  const credentialVaultReady = (process.env.CREDENTIAL_ENCRYPTION_KEY || "").length >= 32;
+  // Report only validation state; never expose the value or its exact length.
+  const vaultInput = process.env.CREDENTIAL_ENCRYPTION_KEY;
+  const credentialVaultKeyState = vaultInput === undefined
+    ? "missing"
+    : vaultInput.length === 0
+      ? "empty"
+      : vaultInput.length < 32
+        ? "below_minimum"
+        : "meets_minimum";
+  const credentialVaultReady = credentialVaultKeyState === "meets_minimum";
   const migrationTables = [
     "organizations",
     "projects",
@@ -58,6 +66,10 @@ export async function GET() {
       status: databaseReady && credentialVaultReady ? "ok" : "degraded",
       service: "webops-ai",
       version: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 8) || "development",
+      deployment: {
+        target: process.env.VERCEL_TARGET_ENV || process.env.VERCEL_ENV || "unknown",
+        branch: process.env.VERCEL_GIT_COMMIT_REF || null,
+      },
       authEnforced: process.env.SECURITY_ENFORCE_AUTH === "true",
       configuration: {
         supabaseUrlConfigured,
@@ -65,6 +77,7 @@ export async function GET() {
         serviceRoleConfigured,
         authenticationReady: supabaseUrlConfigured && supabaseAnonKeyConfigured,
         credentialVaultReady,
+        credentialVaultKeyState,
       },
       database: {
         configured: Boolean(databaseReadiness),
