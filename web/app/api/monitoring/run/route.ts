@@ -61,20 +61,6 @@ export async function GET(request: Request) {
       ? ((await projectResponse.json()) as Array<{ domain: string }>)[0]
       : null;
     if (!project) {
-      await fetch(`${value.url}/rest/v1/monitoring_alerts`, {
-        method: "POST",
-        headers: headers(value.key),
-        body: JSON.stringify({
-          owner_id: monitor.owner_id,
-          project_id: monitor.project_id,
-          audit_id: `monitor-${monitor.id}`,
-          kind: "failure",
-          severity: "high",
-          summary: { reason: "project_missing" },
-          status: "open",
-        }),
-        cache: "no-store",
-      }).catch(() => null);
       results.push({ monitorId: monitor.id, status: "project_missing" });
       continue;
     }
@@ -124,12 +110,16 @@ export async function GET(request: Request) {
         if (comparison.regressions.length)
           await fetch(`${value.url}/rest/v1/monitoring_alerts`, {
             method: "POST",
-            headers: headers(value.key),
+            headers: headers(value.key, "resolution=merge-duplicates"),
             body: JSON.stringify({
               owner_id: monitor.owner_id,
               project_id: monitor.project_id,
               audit_id: audit.auditId,
               kind: "regression",
+              alert_fingerprint: `regression:${monitor.project_id}:${comparison.regressions
+                .map((finding) => finding.ruleId)
+                .sort()
+                .join("|")}`,
               severity: comparison.regressions.some(
                 (finding) => finding.severity === "critical",
               )
@@ -166,20 +156,6 @@ export async function GET(request: Request) {
         auditId: audit.auditId,
       });
     } catch {
-      await fetch(`${value.url}/rest/v1/monitoring_alerts`, {
-        method: "POST",
-        headers: headers(value.key),
-        body: JSON.stringify({
-          owner_id: monitor.owner_id,
-          project_id: monitor.project_id,
-          audit_id: `monitor-${monitor.id}`,
-          kind: "failure",
-          severity: "high",
-          summary: { reason: "audit_failed" },
-          status: "open",
-        }),
-        cache: "no-store",
-      }).catch(() => null);
       results.push({ monitorId: monitor.id, status: "failed" });
     }
   }
