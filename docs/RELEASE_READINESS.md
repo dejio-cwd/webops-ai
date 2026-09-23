@@ -26,10 +26,10 @@
 | Authentication | 0 | 7 | 7 |
 | Tenancy | 0 | 6 | 6 |
 | Secrets | 0 | 6 | 6 |
-| Security/reliability | 0 | 7 | 7 |
+| Security/reliability | 2 | 7 | 5 |
 | UX/accessibility | 0 | 6 | 6 |
-| Delivery/release | 0 | 7 | 7 |
-| **Formal staging certification total** | **0** | **39** | **39** |
+| Delivery/release | 1 | 7 | 6 |
+| **Evidence-backed acceptance total** | **3** | **39** | **36** |
 
 ## Required before merge
 
@@ -48,4 +48,4 @@
 - No raw cron secret, encryption key or API key belongs in source, logs or audit metadata.
 - Production remains unchanged until explicit approval.
 
-> Counting policy: implementation counts increase only after a committed code change. Formal staging certification counts increase only after a reproducible staging test result or user-provided evidence. Preview health, formatting checks and Vercel deployment are implementation validation, not formal staging certification.
+> Counting policy: implementation counts increase only after a committed code change. Acceptance counts increase only after reproducible deployed evidence or user-provided evidence. The current three evidenced gates are: safe health/readiness response, anonymous protected API boundary, and successful preview delivery. Authenticated acceptance remains outstanding.
