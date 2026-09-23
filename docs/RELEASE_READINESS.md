@@ -17,19 +17,19 @@
 | Part 3 — Fix Center/AI Studio foundation | 2 | 2 | 0 |
 | Part 4 — Monitoring/reporting foundation | 2 | 2 | 0 |
 | Part 5 — Enterprise launch | 0 | 1 | 1 |
-| **Total** | **12** | **15** | **3** |
+| **Total code-complete foundation workstreams** | **12** | **15** | **3** |
 
 ## Staging acceptance ledger
 
 | Area | Evidenced | Total | Outstanding |
 | --- | ---: | ---: | ---: |
-| Authentication | 2 | 7 | 5 |
-| Tenancy | 2 | 6 | 4 |
-| Secrets | 2 | 6 | 4 |
-| Security/reliability | 4 | 7 | 3 |
-| UX/accessibility | 1 | 6 | 5 |
-| Delivery/release | 3 | 7 | 4 |
-| **Total** | **14** | **39** | **25** |
+| Authentication | 0 | 7 | 7 |
+| Tenancy | 0 | 6 | 6 |
+| Secrets | 0 | 6 | 6 |
+| Security/reliability | 0 | 7 | 7 |
+| UX/accessibility | 0 | 6 | 6 |
+| Delivery/release | 0 | 7 | 7 |
+| **Formal staging certification total** | **0** | **39** | **39** |
 
 ## Required before merge
 
@@ -47,3 +47,5 @@
 - No provider secret is returned to the browser after vault creation.
 - No raw cron secret, encryption key or API key belongs in source, logs or audit metadata.
 - Production remains unchanged until explicit approval.
+
+> Counting policy: implementation counts increase only after a committed code change. Formal staging certification counts increase only after a reproducible staging test result or user-provided evidence. Preview health, formatting checks and Vercel deployment are implementation validation, not formal staging certification.
