@@ -61,6 +61,20 @@ export async function GET(request: Request) {
       ? ((await projectResponse.json()) as Array<{ domain: string }>)[0]
       : null;
     if (!project) {
+      await fetch(`${value.url}/rest/v1/monitoring_alerts`, {
+        method: "POST",
+        headers: headers(value.key),
+        body: JSON.stringify({
+          owner_id: monitor.owner_id,
+          project_id: monitor.project_id,
+          audit_id: `monitor-${monitor.id}`,
+          kind: "failure",
+          severity: "high",
+          summary: { reason: "project_missing" },
+          status: "open",
+        }),
+        cache: "no-store",
+      }).catch(() => null);
       results.push({ monitorId: monitor.id, status: "project_missing" });
       continue;
     }
@@ -152,6 +166,20 @@ export async function GET(request: Request) {
         auditId: audit.auditId,
       });
     } catch {
+      await fetch(`${value.url}/rest/v1/monitoring_alerts`, {
+        method: "POST",
+        headers: headers(value.key),
+        body: JSON.stringify({
+          owner_id: monitor.owner_id,
+          project_id: monitor.project_id,
+          audit_id: `monitor-${monitor.id}`,
+          kind: "failure",
+          severity: "high",
+          summary: { reason: "audit_failed" },
+          status: "open",
+        }),
+        cache: "no-store",
+      }).catch(() => null);
       results.push({ monitorId: monitor.id, status: "failed" });
     }
   }
