@@ -211,6 +211,28 @@ export default function Home() {
     URL.revokeObjectURL(link.href);
   }, [audit]);
 
+  const exportFindingsCsv = useCallback(() => {
+    if (!audit) return;
+    const escape = (value: string) => `"${value.replaceAll('"', '""')}"`;
+    const rows = [
+      ["Severity", "Category", "Rule", "Title", "URL", "Evidence"],
+      ...audit.findings.map((finding) => [
+        finding.severity,
+        finding.category,
+        finding.ruleId,
+        finding.title,
+        finding.url,
+        finding.evidence || "",
+      ]),
+    ];
+    const csv = rows.map((row) => row.map(escape).join(",")).join("\n");
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    link.download = `webops-findings-${audit.auditId}.csv`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  }, [audit]);
+
   const loadHistoricalAudit = useCallback(async (auditId: string) => {
     setError("");
     const res = await fetch(
@@ -303,6 +325,9 @@ export default function Home() {
             <>
               <button className="btn ghost sm" onClick={exportAudit}>
                 Export evidence JSON
+              </button>
+              <button className="btn ghost sm" onClick={exportFindingsCsv}>
+                Export findings CSV
               </button>
               <div className="chip">
                 engine v{audit.version} ·{" "}
