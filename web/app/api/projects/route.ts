@@ -24,6 +24,16 @@ async function memberRole(config: { url: string; serviceKey: string }, organizat
   return rows[0]?.role || null;
 }
 
+async function projectInOrganization(config: { url: string; serviceKey: string }, projectId: string, organizationId: string) {
+  const response = await fetch(
+    `${config.url}/rest/v1/projects?select=id&id=eq.${encodeURIComponent(projectId)}&organization_id=eq.${encodeURIComponent(organizationId)}&limit=1`,
+    { headers: headers(config.serviceKey), cache: "no-store" },
+  );
+  if (!response.ok) return null;
+  const rows = await response.json() as Array<{ id: string }>;
+  return rows.length > 0;
+}
+
 
 export async function GET(request: Request) {
   const actor = await guardApiRequest(request, { bucket: "projects-read", limit: 60, requireAuth: true });
@@ -87,8 +97,12 @@ export async function DELETE(request: Request) {
   if (!projectId || !organizationId) return Response.json({ error: "Project and workspace are required." }, { status: 400 });
   const role = await memberRole(config, organizationId, actor.id);
   if (!role || !["owner", "admin"].includes(role)) return Response.json({ error: "Owner or admin access required." }, { status: 403 });
-  const response = await fetch(`${config.url}/rest/v1/projects?id=eq.${encodeURIComponent(projectId)}&organization_id=eq.${encodeURIComponent(organizationId)}`, { method: "DELETE", headers: headers(config.serviceKey, "return=minimal"), cache: "no-store" });
+  if (!await projectInOrganization(config, projectId, organizationId))
+    return Response.json({ error: "Project not found in this workspace." }, { status: 404 });
+  const response = await fetch(`${config.url}/rest/v1/projects?id=eq.${encodeURIComponent(projectId)}&organization_id=eq.${encodeURIComponent(organizationId)}`, { method: "DELETE", headers: headers(config.serviceKey, "return=representation"), cache: "no-store" });
   if (!response.ok) return Response.json({ error: "Unable to delete project." }, { status: 400 });
+  const deleted = await response.json() as Array<{ id: string }>;
+  if (!deleted.length) return Response.json({ error: "Project not found in this workspace." }, { status: 404 });
   await audit(config, organizationId, actor.id, "project.deleted", projectId);
   return Response.json({ ok: true });
 }
@@ -106,9 +120,12 @@ export async function PATCH(request: Request) {
   if (!projectId || !organizationId || !["production", "staging", "development"].includes(environment)) return Response.json({ error: "Project, workspace, and a valid environment are required." }, { status: 400 });
   const role = await memberRole(config, organizationId, actor.id);
   if (!role || !["owner", "admin", "developer"].includes(role)) return Response.json({ error: "Owner, admin, or developer access is required." }, { status: 403 });
+  if (!await projectInOrganization(config, projectId, organizationId))
+    return Response.json({ error: "Project not found in this workspace." }, { status: 404 });
   const response = await fetch(`${config.url}/rest/v1/projects?id=eq.${encodeURIComponent(projectId)}&organization_id=eq.${encodeURIComponent(organizationId)}`, { method: "PATCH", headers: headers(config.serviceKey, "return=representation"), body: JSON.stringify({ environment }), cache: "no-store" });
   if (!response.ok) return Response.json({ error: "Unable to update project environment." }, { status: 400 });
   const projects = await response.json() as Project[];
+  if (!projects.length) return Response.json({ error: "Project not found in this workspace." }, { status: 404 });
   await audit(config, organizationId, actor.id, "project.environment_updated", projectId);
   return Response.json({ project: projects[0] || null });
 }
