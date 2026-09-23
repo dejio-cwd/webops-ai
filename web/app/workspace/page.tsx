@@ -209,6 +209,39 @@ export default function WorkspacePage() {
   const activeProject =
     visibleProjects.find((project) => project.id === activeProjectId) ||
     visibleProjects[0];
+  // Reload persisted monitoring state whenever the active tenant project changes.
+  // Default form values are only used when no configuration exists yet.
+  useEffect(() => {
+    const projectId = activeProject?.id;
+    let cancelled = false;
+    setMonitorCadence("weekly");
+    setMonitorEnabled(false);
+    setMonitorStatus("");
+    setMonitorAlerts([]);
+    if (!projectId) return () => { cancelled = true; };
+    Promise.all([
+      apiFetch(`/api/monitoring?projectId=${encodeURIComponent(projectId)}`),
+      apiFetch(`/api/monitoring/alerts?projectId=${encodeURIComponent(projectId)}`),
+    ]).then(async ([monitorResponse, alertResponse]) => {
+      if (cancelled) return;
+      if (monitorResponse.ok) {
+        const data = (await monitorResponse.json()) as { monitors?: Array<{ cadence: "daily" | "weekly"; enabled: boolean; next_run_at: string | null }> };
+        const monitor = data.monitors?.[0];
+        if (monitor && !cancelled) {
+          setMonitorCadence(monitor.cadence);
+          setMonitorEnabled(monitor.enabled);
+          setMonitorStatus(monitor.enabled && monitor.next_run_at
+            ? `Next scheduled run: ${new Date(monitor.next_run_at).toLocaleString()}`
+            : "Monitoring paused.");
+        }
+      }
+      if (alertResponse.ok) {
+        const data = (await alertResponse.json()) as { alerts?: typeof monitorAlerts };
+        if (!cancelled) setMonitorAlerts(data.alerts || []);
+      }
+    }).catch(() => { if (!cancelled) setMonitorStatus("Unable to load monitoring settings."); });
+    return () => { cancelled = true; };
+  }, [activeProject?.id]);
   const projectTarget = activeProject
     ? `/audit?url=${encodeURIComponent("https://" + activeProject.domain)}&projectId=${encodeURIComponent(activeProject.id)}&environment=${encodeURIComponent(activeProject.environment)}`
     : "/onboarding";
@@ -451,9 +484,9 @@ export default function WorkspacePage() {
       setError(data.error || "Unable to save monitoring configuration.");
     else {
       setMonitorStatus(
-        data.monitor?.next_run_at
+        monitorEnabled ? (data.monitor?.next_run_at
           ? `Next scheduled run: ${new Date(data.monitor.next_run_at).toLocaleString()}`
-          : "Monitoring configuration saved.",
+          : "Monitoring configuration saved.") : "Monitoring paused.",
       );
       setNotice("Monitoring configuration saved.");
     }
