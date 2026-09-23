@@ -1,3 +1,4 @@
+import { verificationCoverage } from "@/lib/fix-verification";
 import { guardApiRequest, isGuardResponse } from "@/lib/security/api-guard";
 
 type Config = { url: string; key: string };
@@ -106,6 +107,7 @@ export async function POST(request: Request) {
     recommendation?: string;
     verificationNote?: string;
     rollbackPlan?: string;
+    verificationAuditId?: string;
   };
   try {
     body = await request.json();
@@ -133,6 +135,58 @@ export async function POST(request: Request) {
       { error: "Audit, opportunity, title, and valid status are required." },
       { status: 400 },
     );
+  // The service role bypasses RLS: validate the audit and project association
+  // before allowing a write. A supplied project ID alone is not proof of scope.
+  const auditResponse = await fetch(
+    `${value.url}/rest/v1/audit_runs?select=audit_id,project_id,created_at,status,result&owner_id=eq.${encodeURIComponent(actor.id)}&audit_id=eq.${encodeURIComponent(body.auditId)}&limit=1`,
+    { headers: headers(value.key), cache: "no-store" },
+  );
+  if (!auditResponse.ok)
+    return Response.json({ error: "Unable to validate audit scope." }, { status: 502 });
+  const baselines = (await auditResponse.json()) as Array<{
+    project_id: string | null;
+    created_at: string;
+    status: string;
+    result: { opportunities?: Array<{ id: string; affectedUrls: string[] }> } | null;
+  }>;
+  const baseline = baselines[0];
+  if (!baseline || baseline.project_id !== (body.projectId || null) || baseline.status !== "completed")
+    return Response.json({ error: "Audit is not available in this project." }, { status: 403 });
+  if (!baseline.result?.opportunities?.some((item) => item.id === body.opportunityId))
+    return Response.json({ error: "Opportunity is not part of this audit." }, { status: 400 });
+  if (body.status === "verified") {
+    if (!body.verificationAuditId || !body.verificationNote?.trim() || !body.rollbackPlan?.trim())
+      return Response.json({ error: "A later audit, verification note, and rollback plan are required." }, { status: 400 });
+    const existingResponse = await fetch(
+      `${value.url}/rest/v1/fix_records?select=status&owner_id=eq.${encodeURIComponent(actor.id)}&audit_id=eq.${encodeURIComponent(body.auditId)}&opportunity_id=eq.${encodeURIComponent(body.opportunityId)}&limit=1`,
+      { headers: headers(value.key), cache: "no-store" },
+    );
+    if (!existingResponse.ok) return Response.json({ error: "Unable to validate fix state." }, { status: 502 });
+    const existing = (await existingResponse.json()) as Array<{ status: string }>;
+    if (existing[0]?.status !== "ready")
+      return Response.json({ error: "Only ready fixes can be verified." }, { status: 409 });
+    const followupResponse = await fetch(
+      `${value.url}/rest/v1/audit_runs?select=audit_id,project_id,created_at,status,result&owner_id=eq.${encodeURIComponent(actor.id)}&audit_id=eq.${encodeURIComponent(body.verificationAuditId)}&limit=1`,
+      { headers: headers(value.key), cache: "no-store" },
+    );
+    if (!followupResponse.ok) return Response.json({ error: "Unable to validate follow-up audit." }, { status: 502 });
+    const followups = (await followupResponse.json()) as Array<{
+      project_id: string | null;
+      created_at: string;
+      status: string;
+      result: {
+        crawl?: { truncated?: boolean };
+        pages?: Array<{ url: string; ok: boolean; status: number }>;
+        findings?: Array<{ ruleId: string; url: string }>;
+      } | null;
+    }>;
+    const followup = followups[0];
+    if (!followup || followup.project_id !== baseline.project_id || followup.status !== "completed" ||
+        Date.parse(followup.created_at) <= Date.parse(baseline.created_at) || !followup.result)
+      return Response.json({ error: "Verification requires a later completed audit of this project." }, { status: 409 });
+    const coverage = verificationCoverage(baseline.result, followup.result, body.opportunityId);
+    if (!coverage.valid) return Response.json({ error: coverage.reason }, { status: 409 });
+  }
   const response = await fetch(`${value.url}/rest/v1/fix_records`, {
     method: "POST",
     headers: headers(

@@ -525,6 +525,7 @@ export default function Home() {
             audit={audit}
             fixCred={getCredential("fix")}
             projectId={projectId}
+            history={history}
           />
         )}
         {active === "Roadmap" && <Roadmap />}
@@ -1079,10 +1080,12 @@ function FixCenter({
   audit,
   fixCred,
   projectId,
+  history,
 }: {
   audit: AuditResult;
   fixCred: Credential;
   projectId: string;
+  history: AuditRunSummary[];
 }) {
   const [states, setStates] = useState<
     Record<string, "draft" | "ready" | "verified">
@@ -1112,36 +1115,56 @@ function FixCenter({
       })
       .catch(() => null);
   }, [audit.auditId]);
+  const [saveError, setSaveError] = useState("");
+  const [saving, setSaving] = useState<string | null>(null);
+  const [verifyId, setVerifyId] = useState<string | null>(null);
+  const [verificationAuditId, setVerificationAuditId] = useState("");
+  const [verificationNote, setVerificationNote] = useState("");
+  const [rollbackPlan, setRollbackPlan] = useState("");
+  const saveState = async (
+    opp: Opportunity,
+    next: "draft" | "ready" | "verified",
+    verification?: { auditId: string; note: string; rollback: string },
+  ) => {
+    setSaveError("");
+    setSaving(opp.id);
+    try {
+      const response = await fetch("/api/fixes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          auditId: audit.auditId,
+          projectId: projectId || undefined,
+          opportunityId: opp.id,
+          title: opp.title,
+          status: next,
+          evidence: opp.sampleEvidence,
+          recommendation: opp.recommendation,
+          verificationAuditId: verification?.auditId,
+          verificationNote: verification?.note,
+          rollbackPlan: verification?.rollback,
+        }),
+      });
+      const data = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(data.error || "Unable to save fix state.");
+      setStates((current) => ({ ...current, [opp.id]: next }));
+      setVerifyId(null);
+      return true;
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Unable to save fix state.");
+      return false;
+    } finally {
+      setSaving(null);
+    }
+  };
   const bulkAdvance = async () => {
-    const targets = audit.opportunities.filter((opp) =>
-      selectedIds.includes(opp.id),
-    );
-    await Promise.all(
-      targets.map(async (opp) => {
-        const current = states[opp.id] || "draft";
-        const next =
-          current === "draft"
-            ? "ready"
-            : current === "ready"
-              ? "verified"
-              : current;
-        if (next === current) return;
-        setStates((value) => ({ ...value, [opp.id]: next }));
-        await fetch("/api/fixes", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            auditId: audit.auditId,
-            projectId: projectId || undefined,
-            opportunityId: opp.id,
-            title: opp.title,
-            status: next,
-            evidence: opp.sampleEvidence,
-            recommendation: opp.recommendation,
-          }),
-        });
-      }),
-    );
+    const targets = audit.opportunities.filter((opp) => selectedIds.includes(opp.id));
+    const drafts = targets.filter((opp) => (states[opp.id] || "draft") === "draft");
+    if (drafts.length !== targets.length) {
+      setSaveError("Only draft fixes can be advanced in bulk; verification requires a later audit for each fix.");
+      return;
+    }
+    for (const opp of drafts) await saveState(opp, "ready");
     setSelectedIds([]);
   };
   const [playbooks, setPlaybooks] = useState<Record<string, string>>({});
@@ -1224,6 +1247,7 @@ function FixCenter({
           </button>
         </div>
       </div>
+      {saveError && <div className="notice bad" role="alert">{saveError}</div>}
       {audit.opportunities
         .filter(
           (opp) => filter === "all" || (states[opp.id] || "draft") === filter,
@@ -1231,32 +1255,12 @@ function FixCenter({
         .map((opp) => {
           const state = states[opp.id] || "draft";
           const advance = async () => {
-            const next =
-              state === "draft"
-                ? "ready"
-                : state === "ready"
-                  ? "verified"
-                  : "draft";
-            setStates((current) => ({ ...current, [opp.id]: next }));
-            await fetch("/api/fixes", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                auditId: audit.auditId,
-                projectId: projectId || undefined,
-                opportunityId: opp.id,
-                title: opp.title,
-                status: next,
-                evidence: opp.sampleEvidence,
-                recommendation: opp.recommendation,
-                verificationNote:
-                  next === "verified"
-                    ? "Verified after rerunning the relevant audit rule."
-                    : undefined,
-                rollbackPlan:
-                  "Revert the change and rerun the audit if the finding persists or a regression appears.",
-              }),
-            });
+            if (state === "ready") {
+              setVerifyId(opp.id);
+              setSaveError("");
+              return;
+            }
+            await saveState(opp, state === "draft" ? "ready" : "draft");
           };
           return (
             <div className="opp" key={opp.id}>
@@ -1308,11 +1312,11 @@ function FixCenter({
                     ? "Generating…"
                     : "Generate evidence-grounded playbook"}
                 </button>
-                <button className="btn sm" onClick={() => void advance()}>
+                <button className="btn sm" onClick={() => void advance()} disabled={saving === opp.id}>
                   {state === "draft"
                     ? "Mark ready for approval"
                     : state === "ready"
-                      ? "Mark verified"
+                      ? "Verify against later audit"
                       : "Reopen fix"}
                 </button>
                 <button
@@ -1326,6 +1330,30 @@ function FixCenter({
                     : "Validation checklist"}
                 </button>
               </div>
+              {verifyId === opp.id && (
+                <div className="ai-out">
+                  <b>Verify with a later completed audit</b>
+                  <p>Select an audit that recrawled every affected URL and no longer reports this finding.</p>
+                  <label>Follow-up audit
+                    <select value={verificationAuditId} onChange={(event) => setVerificationAuditId(event.target.value)}>
+                      <option value="">Select a later audit</option>
+                      {history.filter((run) => run.audit_id !== audit.auditId && run.status === "completed" && new Date(run.created_at).getTime() > new Date(audit.capturedAt).getTime()).map((run) => (
+                        <option key={run.audit_id} value={run.audit_id}>{new Date(run.created_at).toLocaleString()} · {run.url}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>Verification note
+                    <textarea value={verificationNote} onChange={(event) => setVerificationNote(event.target.value)} placeholder="Describe the change and evidence reviewed" />
+                  </label>
+                  <label>Rollback plan
+                    <textarea value={rollbackPlan} onChange={(event) => setRollbackPlan(event.target.value)} placeholder="How to reverse the change if it regresses" />
+                  </label>
+                  <button className="btn sm" disabled={!verificationAuditId || !verificationNote.trim() || !rollbackPlan.trim() || saving === opp.id}
+                    onClick={() => void saveState(opp, "verified", { auditId: verificationAuditId, note: verificationNote, rollback: rollbackPlan })}>
+                    Confirm verified with recrawl evidence
+                  </button>
+                </div>
+              )}
               {playbooks[opp.id] && (
                 <div className="ai-out">
                   <b>Evidence-grounded playbook</b>
