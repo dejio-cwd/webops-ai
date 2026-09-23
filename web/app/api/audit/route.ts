@@ -35,6 +35,32 @@ function supabaseHeaders(key: string, prefer?: string) {
   };
 }
 
+type ProjectAccess = {
+  id: string;
+  owner_id: string;
+  organization_id: string | null;
+  domain: string;
+  environment: string;
+  role: string | null;
+};
+async function projectAccess(config: SupabaseConfig, projectId: string, actorId: string): Promise<ProjectAccess | null> {
+  const response = await fetch(
+    `${config.url}/rest/v1/projects?select=id,owner_id,organization_id,domain,environment&id=eq.${encodeURIComponent(projectId)}&limit=1`,
+    { headers: supabaseHeaders(config.key), cache: "no-store" },
+  );
+  if (!response.ok) return null;
+  const project = (await response.json() as Array<Omit<ProjectAccess, "role">>)[0];
+  if (!project) return null;
+  if (project.owner_id === actorId) return { ...project, role: "owner" };
+  if (!project.organization_id) return { ...project, role: null };
+  const membershipResponse = await fetch(
+    `${config.url}/rest/v1/organization_members?select=role&organization_id=eq.${encodeURIComponent(project.organization_id)}&user_id=eq.${encodeURIComponent(actorId)}&limit=1`,
+    { headers: supabaseHeaders(config.key), cache: "no-store" },
+  );
+  const members = membershipResponse.ok ? await membershipResponse.json() as Array<{ role: string }> : [];
+  return { ...project, role: members[0]?.role || null };
+}
+
 export async function GET(request: Request) {
   const actor = await guardApiRequest(request, {
     bucket: "audit-history-read",
@@ -58,11 +84,14 @@ export async function GET(request: Request) {
   const projectId = searchParams.get("projectId") || "";
   if (projectId && !/^[0-9a-f-]{36}$/i.test(projectId))
     return Response.json({ error: "Invalid project ID." }, { status: 400 });
+  if (projectId && !(await projectAccess(config, projectId, actor.id))?.role)
+    return Response.json({ error: "Project access denied." }, { status: 403 });
+  const ownerFilter = projectId ? "" : `&owner_id=eq.${encodeURIComponent(actor.id)}`;
   const projectFilter = projectId ? `&project_id=eq.${encodeURIComponent(projectId)}` : "";
   const beforeId = searchParams.get("before") || "";
   const afterId = searchParams.get("after") || "";
   if (beforeId && afterId) {
-    const comparisonEndpoint = `${config.url}/rest/v1/audit_runs?select=audit_id,result&owner_id=eq.${encodeURIComponent(actor.id)}${projectFilter}&audit_id=in.(${encodeURIComponent(beforeId)},${encodeURIComponent(afterId)})`;
+    const comparisonEndpoint = `${config.url}/rest/v1/audit_runs?select=audit_id,result${ownerFilter}${projectFilter}&audit_id=in.(${encodeURIComponent(beforeId)},${encodeURIComponent(afterId)})`;
     const comparisonResponse = await fetch(comparisonEndpoint, {
       headers: supabaseHeaders(config.key),
       cache: "no-store",
@@ -89,9 +118,9 @@ export async function GET(request: Request) {
         );
   }
   const select = auditId
-    ? "id,url,audit_id,engine_version,status,summary,result,created_at,completed_at"
-    : "id,url,audit_id,engine_version,status,summary,created_at,completed_at";
-  const endpoint = `${config.url}/rest/v1/audit_runs?select=${select}&owner_id=eq.${encodeURIComponent(actor.id)}${projectFilter}${auditId ? `&audit_id=eq.${encodeURIComponent(auditId)}&limit=1` : "&order=created_at.desc&limit=20"}`;
+    ? "id,project_id,url,audit_id,engine_version,status,summary,result,created_at,completed_at"
+    : "id,project_id,url,audit_id,engine_version,status,summary,created_at,completed_at";
+  const endpoint = `${config.url}/rest/v1/audit_runs?select=${select}${ownerFilter}${projectFilter}${auditId ? `&audit_id=eq.${encodeURIComponent(auditId)}&limit=1` : "&order=created_at.desc&limit=20"}`;
   const response = await fetch(endpoint, {
     headers: supabaseHeaders(config.key),
     cache: "no-store",
@@ -163,31 +192,17 @@ export async function POST(request: Request) {
   if (projectId && !config)
     return Response.json({ error: "Project service is not configured." }, { status: 503 });
   if (projectId && config) {
-    const projectResponse = await fetch(
-      `${config.url}/rest/v1/projects?select=id,owner_id,domain,environment&id=eq.${encodeURIComponent(projectId)}&limit=1`,
-      { headers: supabaseHeaders(config.key), cache: "no-store" },
-    );
-    const projects = projectResponse.ok
-      ? ((await projectResponse.json()) as Array<{
-          id: string;
-          owner_id: string;
-          domain: string;
-          environment: string;
-        }>)
-      : [];
-    if (projects[0]?.owner_id !== actor.id)
-      return Response.json(
-        { error: "Project access denied." },
-        { status: 403 },
-      );
+    const project = await projectAccess(config, projectId, actor.id);
+    if (!project?.role || !["owner", "admin", "developer"].includes(project.role))
+      return Response.json({ error: "Project audit access denied." }, { status: 403 });
     let host = "";
     try { host = new URL(withScheme).hostname.toLowerCase(); } catch { /* rejected below */ }
-    const domain = projects[0].domain.toLowerCase();
+    const domain = project.domain.toLowerCase();
     if (host !== domain && !host.endsWith(`.${domain}`))
       return Response.json({ error: "Audit URL must match the selected project domain." }, { status: 400 });
-    if (environment && environment !== projects[0].environment)
+    if (environment && environment !== project.environment)
       return Response.json({ error: "Audit environment must match the selected project." }, { status: 400 });
-    associatedProjectId = projects[0].id;
+    associatedProjectId = project.id;
   }
   const maxPages = clamp(body.maxPages ?? 20, 1, HARD_MAX_PAGES);
   const maxDepth = clamp(body.maxDepth ?? 3, 0, HARD_MAX_DEPTH);

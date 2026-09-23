@@ -11,9 +11,16 @@ test('audit history and comparisons are filtered by selected project',()=>{
   assert.match(ui,/if \(routeReady\) void loadHistory\(\)/);
   assert.match(ui,/\/api\/audit\$\{projectId \? `\?projectId=/);
 });
-test('associated audit URL and environment must match the owned project',()=>{
+test('project audits require membership, and only writers can start runs',()=>{
+  assert.match(route,/project\.owner_id === actorId/);
+  assert.match(route,/organization_members\?select=role/);
+  assert.match(route,/if \(projectId && !\(await projectAccess\(config, projectId, actor\.id\)\)\?\.role\)/);
+  assert.match(route,/!\["owner", "admin", "developer"\]\.includes\(project\.role\)/);
+  assert.match(route,/const ownerFilter = projectId \? "" :/);
+});
+test('associated audit URL and environment must match the selected project',()=>{
   assert.match(route,/host !== domain && !host\.endsWith\(`\.\$\{domain\}`\)/);
-  assert.match(route,/environment && environment !== projects\[0\]\.environment/);
+  assert.match(route,/environment && environment !== project\.environment/);
 });
 test('zero-page crawl is not assigned a fabricated score',()=>{
   assert.match(engine,/if \(stats\.pagesCrawled === 0\) throw new NoCrawlEvidenceError\(\)/);
