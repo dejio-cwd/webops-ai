@@ -23,6 +23,8 @@ export async function GET() {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
   );
   const serviceRoleConfigured = Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY);
+  // Match the vault's minimum key requirement without exposing the key or its length.
+  const credentialVaultReady = (process.env.CREDENTIAL_ENCRYPTION_KEY || "").length >= 32;
   const migrationTables = [
     "organizations",
     "projects",
@@ -53,7 +55,7 @@ export async function GET() {
     : false;
   return Response.json(
     {
-      status: "ok",
+      status: databaseReady && credentialVaultReady ? "ok" : "degraded",
       service: "webops-ai",
       version: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 8) || "development",
       authEnforced: process.env.SECURITY_ENFORCE_AUTH === "true",
@@ -62,6 +64,7 @@ export async function GET() {
         supabaseAnonKeyConfigured,
         serviceRoleConfigured,
         authenticationReady: supabaseUrlConfigured && supabaseAnonKeyConfigured,
+        credentialVaultReady,
       },
       database: {
         configured: Boolean(databaseReadiness),
