@@ -7,3 +7,15 @@
 .light{--muted:#55627c}
 .light .moduleGrid span{color:#465b86}
 .light .main header small,.light .sectionHead small{color:#485b82}
+/* Keep module navigation and sign-out reachable at mobile widths. */
+@media(max-width:700px){
+  .sidebar{height:auto;position:static;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .brand{padding:0;margin-right:auto}
+  .sidebar nav{display:flex;order:3;width:100%;overflow-x:auto;gap:4px;padding-bottom:4px}
+  .sidebar nav button{flex:0 0 auto;white-space:nowrap;justify-content:center}
+  .sidebar nav button span{display:inline}
+  .sidebar nav em{display:none}
+  .user{display:flex;margin:0;padding:0;border:0}
+  .user>span,.user div{display:none}
+  .user button{display:block}
+}
