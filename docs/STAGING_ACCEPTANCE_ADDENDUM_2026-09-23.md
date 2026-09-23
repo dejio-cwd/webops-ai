@@ -119,3 +119,12 @@ External gates remain external: human code review; usable GitHub checks/CI and w
 - On Preview `b2fe6f6`, the dedicated migration regression test passed and the affected project/audit/Fix Center authorization suite passed 7/7. Authenticated tenant-B runtime retest returned 404 for cross-tenant PATCH and DELETE attempts, and the CWD project remained present with environment `staging`.
 
 No Production database, environment, deployment, or grant/RLS setting was changed. Positive remediation, real provider, live scheduler, GitHub integration evidence, and enterprise certification gates remain separately blocked or unverified as previously recorded.
+
+## Core public-URL audit acceptance — ownership not required
+
+- Domain ownership is not a prerequisite for the product's bounded, robots-respecting public-URL audit. Ownership remains required only for privileged/continuous operations such as enabling monitoring and positive remediation verification.
+- In the isolated QA project, a new bounded `https://example.com` audit with `maxPages: 1`, `maxDepth: 0`, `respectRobots: true`, and external-link checks disabled completed HTTP 200; it crawled one page, scored 82, and persisted to the selected project history. `example.com/robots.txt` returned HTTP 404 (no published blocking policy).
+- Boundary checks rejected `http://127.0.0.1` with HTTP 400 `Private network targets are blocked.` and rejected a project-associated public URL outside the selected domain with HTTP 400 `Audit URL must match the selected project domain.` No Nyrius request, robots override, or DNS ownership action was used.
+- Current crawler source manually handles redirects and calls `validateTarget` before every hop; this is source-level evidence for redirect SSRF protection. A runtime redirect-to-private-network test remains unverified and is not represented as passed.
+
+The public-URL audit gate is distinct from, and does not satisfy, ownership-dependent monitoring, scheduled crawling, or positive-remediation verification gates.
