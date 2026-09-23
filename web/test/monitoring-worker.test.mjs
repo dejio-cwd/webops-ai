@@ -11,7 +11,7 @@ const monitor = { id: "monitor-1", owner_id: "owner-1", project_id: "project-1",
 const audit = { auditId: "audit-1", version: "1.1.1", crawl: { truncated: false, pagesCrawled: 1 }, findings: [], opportunities: [], health: { overall: 82 } };
 const json = (data, status = 200) => Response.json(data, { status });
 
-async function runCase({ verified = true, claim = [{ id: monitor.id }], saveStatus = 201 } = {}) {
+async function runCase({ verified = true, claim = [{ id: monitor.id }], saveStatus = 201, existingFailure = false } = {}) {
   const calls = [];
   let crawls = 0;
   globalThis.__testAudit = async (_url, options) => {
@@ -29,6 +29,8 @@ async function runCase({ verified = true, claim = [{ id: monitor.id }], saveStat
       if (url.includes("enabled=eq.true")) return json(claim);
       return json(init.headers.Prefer ? [{ id: monitor.id }] : []);
     }
+    if (url.includes("monitoring_alerts?") && !init.method) return json(existingFailure ? [{ id: "failure-alert-1" }] : []);
+    if (url.includes("monitoring_alerts") && init.method) return json([{ id: "failure-alert-1" }], init.method === "POST" ? 201 : 200);
     if (url.includes("audit_runs?") && !init.method) return json([]);
     if (url.endsWith("/audit_runs") && init.method === "POST") return json({}, saveStatus);
     throw new Error(`Unexpected fetch: ${url}`);
@@ -61,7 +63,18 @@ test("concurrent claim loss does not crawl", async () => {
 test("failed evidence persistence is not reported as completed", async () => {
   const result = await runCase({ saveStatus: 500 });
   assert.equal(result.result.results[0].status, "failed");
+  assert.equal(result.result.results[0].alertRecorded, true);
+  assert.equal(result.result.results[0].retryScheduled, true);
+  assert.equal(result.calls.some(c => c.url.endsWith("/monitoring_alerts") && c.method === "POST"), true);
   assert.equal(result.calls.some(c => c.method === "PATCH" && String(c.body).includes("next_run_at") && !c.url.includes("enabled=eq.true")), true);
+});
+
+test("repeat failure updates the unresolved alert without reopening its status", async () => {
+  const result = await runCase({ saveStatus: 500, existingFailure: true });
+  assert.equal(result.result.results[0].alertRecorded, true);
+  const update = result.calls.find(c => c.url.includes("/monitoring_alerts?id=") && c.method === "PATCH");
+  assert.ok(update);
+  assert.equal("status" in JSON.parse(update.body), false);
 });
 
 test("scheduler denies requests without the configured secret", async () => {

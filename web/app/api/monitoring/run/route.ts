@@ -19,6 +19,44 @@ function headers(key: string, prefer?: string) {
   };
 }
 
+async function recordFailureAlert(value: Config, monitor: { id: string; owner_id: string; project_id: string }): Promise<boolean> {
+  const fingerprint = `failure:${monitor.project_id}`;
+  try {
+    const existingResponse = await fetch(
+      `${value.url}/rest/v1/monitoring_alerts?select=id&owner_id=eq.${encodeURIComponent(monitor.owner_id)}&project_id=eq.${encodeURIComponent(monitor.project_id)}&alert_fingerprint=eq.${encodeURIComponent(fingerprint)}&status=neq.resolved&limit=1`,
+      { headers: headers(value.key), cache: "no-store" },
+    );
+    if (!existingResponse.ok) return false;
+    const existing = (await existingResponse.json() as Array<{ id: string }>)[0];
+    const details = {
+      audit_id: `failure:${monitor.id}:${Date.now()}`,
+      severity: "high",
+      summary: { reason: "scheduled_audit_failed", failedAt: new Date().toISOString() },
+    };
+    const response = await fetch(
+      existing
+        ? `${value.url}/rest/v1/monitoring_alerts?id=eq.${encodeURIComponent(existing.id)}&owner_id=eq.${encodeURIComponent(monitor.owner_id)}`
+        : `${value.url}/rest/v1/monitoring_alerts`,
+      {
+        method: existing ? "PATCH" : "POST",
+        headers: headers(value.key),
+        body: JSON.stringify(existing ? details : {
+          owner_id: monitor.owner_id,
+          project_id: monitor.project_id,
+          kind: "failure",
+          alert_fingerprint: fingerprint,
+          status: "open",
+          ...details,
+        }),
+        cache: "no-store",
+      },
+    );
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
 export async function GET(request: Request) {
   const expected = process.env.CRON_SECRET;
   if (
@@ -52,6 +90,8 @@ export async function GET(request: Request) {
     monitorId: string;
     status: string;
     auditId?: string;
+    alertRecorded?: boolean;
+    retryScheduled?: boolean;
   }> = [];
   for (const monitor of due) {
     const projectResponse = await fetch(
@@ -201,17 +241,23 @@ export async function GET(request: Request) {
         auditId: audit.auditId,
       });
     } catch {
+      const alertRecorded = await recordFailureAlert(value, monitor);
       // Retry failed runs shortly, but only if this invocation still owns the claim.
-      await fetch(
+      const retryResponse = await fetch(
         `${value.url}/rest/v1/monitoring_configs?id=eq.${encodeURIComponent(monitor.id)}&next_run_at=eq.${encodeURIComponent(next)}`,
         {
           method: "PATCH",
-          headers: headers(value.key),
+          headers: headers(value.key, "return=representation"),
           body: JSON.stringify({ next_run_at: new Date(Date.now() + 900000).toISOString() }),
           cache: "no-store",
         },
       ).catch(() => null);
-      results.push({ monitorId: monitor.id, status: "failed" });
+      results.push({
+        monitorId: monitor.id,
+        status: "failed",
+        alertRecorded,
+        retryScheduled: !!retryResponse?.ok && (await retryResponse.json() as Array<{ id: string }>).length > 0,
+      });
     }
   }
   return Response.json({ processed: results.length, results });
