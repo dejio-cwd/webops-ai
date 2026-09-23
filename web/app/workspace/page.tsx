@@ -920,19 +920,19 @@ export default function WorkspacePage() {
           <small>
             {activeProject ? activeProject.domain : "No active project"}
           </small>
-          {visibleProjects.length > 1 && (
-            <select
-              aria-label="Select project"
-              value={activeProjectId}
-              onChange={(event) => setActiveProjectId(event.target.value)}
-            >
-              {visibleProjects.map((project) => (
-                <option value={project.id} key={project.id}>
-                  {project.name}
-                </option>
-              ))}
-            </select>
-          )}
+          <select
+            aria-label="Select project"
+            value={activeProject?.id || ""}
+            disabled={visibleProjects.length <= 1}
+            onChange={(event) => setActiveProjectId(event.target.value)}
+          >
+            {!visibleProjects.length && <option value="">No project</option>}
+            {visibleProjects.map((project) => (
+              <option value={project.id} key={project.id}>
+                {project.name}
+              </option>
+            ))}
+          </select>
         </div>
         <nav>
           {modules.map((name) => (
