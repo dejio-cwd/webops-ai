@@ -32,3 +32,13 @@ After the GitHub token was reauthorized with Checks: Read and Actions: Read, `ge
 - Manual accessibility checks and complete enterprise integration, SSO/SCIM, retention/regional, load/security/DR gates. These are not silently reduced to an MVP.
 
 Explicit owner approval is required before any production merge or deployment.
+
+## Subsequent independent work (still not release acceptance)
+
+The user confirmed they cannot access Nyrius DNS/registrar. TXT ownership proof is therefore an **external blocker**. No DNS challenge was rotated, no robots override was made, and no Nyrius scheduled crawl was counted as a pass.
+
+- Commit `e68445c` hardened the scheduled worker: it requires a verified project before crawling, keeps `respectRobots: true`, atomically claims the due monitor row by its prior `next_run_at` and enabled state, refuses to report completion if audit evidence persistence fails, and updates an existing unresolved regression alert instead of blindly inserting duplicate fingerprints. Four mocked worker tests passed locally. A live successful scheduled run remains unverified: no authorized verified QA target and scheduler-secret execution evidence are available.
+- Commit `8f1208d` authorized project-member reads of monitoring configuration and alerts, restricted alert transitions and monitor writes to owner/admin/developer, and writes one canonical owner configuration using the `owner_id,project_id` upsert conflict target. Three mocked role/tenant tests passed. These changes have not yet had a viewer-authenticated staging runtime retest.
+- After these commits the available local test set reported 17 passing tests; Vercel's combined status reported a successful preview deployment for `8f1208d`. These are not substitutes for inaccessible GitHub Actions/check-run results or complete end-to-end acceptance. Cookie-omitted staging requests to scheduled run, monitoring configuration, and alerts each returned HTTP 401.
+
+The shared browser is at staging sign-in pending the user's chosen Take Control viewer login. Do not describe the viewer runtime gate as passed until the session is authenticated and those routes are exercised.
