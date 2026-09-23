@@ -111,3 +111,11 @@ External gates remain external: human code review; usable GitHub checks/CI and w
 
 - Supabase migration execution and full RLS/constraint inspection require approved database-console or migration-runner access; table-readiness health is not treated as full migration acceptance.
 - Real AI/provider, verified controlled domain/remediation, live scheduler execution, Actions workflow evidence, Checks API evidence, and Production acceptance remain unverified. PR #1 remains Draft; no merge or Production deployment occurred.
+
+## Staging database authorization remediation — verified
+
+- Read-only staging schema inspection found that RLS was enabled, but `anon` and `authenticated` retained direct table privileges on `public.projects`. The prior project policy allowed organization members to read projects and could permit a member to create an owner-attributed project directly through PostgREST, bypassing the application API's writer-role guard. This was treated as a concrete release-blocking authorization defect, not as a passed RLS gate.
+- Commit `b2fe6f6` adds `20260923_phase1_projects_server_only.sql`, which revokes all direct table privileges on `public.projects` from `anon` and `authenticated`; the server-mediated API continues to use its service role only after authorization. The migration was applied successfully to the verified staging/Preview Supabase project. A read-only `information_schema.role_table_grants` check then returned no rows for those roles on `public.projects`.
+- On Preview `b2fe6f6`, the dedicated migration regression test passed and the affected project/audit/Fix Center authorization suite passed 7/7. Authenticated tenant-B runtime retest returned 404 for cross-tenant PATCH and DELETE attempts, and the CWD project remained present with environment `staging`.
+
+No Production database, environment, deployment, or grant/RLS setting was changed. Positive remediation, real provider, live scheduler, GitHub integration evidence, and enterprise certification gates remain separately blocked or unverified as previously recorded.
