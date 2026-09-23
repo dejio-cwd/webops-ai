@@ -69,3 +69,12 @@ This section **supersedes the earlier vault-readiness blocker** above. After the
 - The scheduler endpoint returned HTTP 401 to an ordinary authenticated session. A mobile-width sample at 390px showed navigation and sign-out, with no horizontal overflow; one sampled app keyboard focus had a visible outline. This is not complete manual accessibility certification.
 
 Still open: GitHub check-runs/CI evidence (prior 403; no permission retries), real-provider connection and AI output, model/usage/cost acceptance, verified controlled domain and robots-allowed positive Nyrius crawl, live scheduler/alert lifecycle, positive fix verification, complete role matrix, accessibility manual checks, and the remaining enterprise integration, SSO/SCIM, retention, load, security, and DR gates. No production merge or deployment occurred.
+
+
+## Fix Center collaboration and upsert regression — Preview only
+
+- On the deployed Preview at commit `02b191c1`, the isolated tenant-B disposable Fix Center record for `SEO-META-MISSING` was transitioned `draft` → `ready` again. Both writes returned HTTP 200; the same record ID persisted and a scoped GET returned `ready`. This confirms the `(owner_id, audit_id, opportunity_id)` conflict target resolves the previously observed draft-to-ready HTTP 502. It does not prove a verified remediation.
+- Commit `7dcab1d` makes project-scoped Fix Center reads available to an authorized project member while retaining owner/admin/developer-only writes. Nineteen available local contract/regression tests passed. The Preview health response was HTTP 200 with `status: ok`, Preview target, branch `phase-1-production-foundation`, authentication enforced, vault ready, and required tables ready.
+- Runtime acceptance: acting as the CWD writer, a disposable CWD QA draft record was created for the completed project audit. Acting as the invited CWD viewer, the scoped GET returned HTTP 200 and included that same record/project; a POST attempting to advance it returned HTTP 403 with the expected writer-role error. This verifies the tested shared-read / writer-only-write path, not every role or endpoint.
+
+The positive verified-fix, real-provider AI, controlled-domain/robots, scheduler/alert lifecycle, CI/check-run visibility, full accessibility, SSO/SCIM, retention/regional, load, security, and DR gates remain open. No production merge or deployment occurred.
