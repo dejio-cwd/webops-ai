@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- external provider JSON is intentionally normalized at the boundary. */
 // Real Lighthouse + Core Web Vitals without running Chrome ourselves: Google's
 // PageSpeed Insights API runs Lighthouse in Google's cloud and returns both lab
 // metrics and (when available) real-user CrUX field data. Works with a keyless
@@ -36,14 +37,21 @@ export interface PageSpeedResult {
     ttfb: string | null;
     overall: string | null;
   };
-  opportunities: { title: string; displayValue: string | null; savingsMs: number }[];
+  opportunities: {
+    title: string;
+    displayValue: string | null;
+    savingsMs: number;
+  }[];
   error?: string;
 }
 
 function metric(audit: Record<string, unknown> | undefined): MetricValue {
   if (!audit) return { value: null, displayValue: null, score: null };
   return {
-    value: typeof audit.numericValue === "number" ? Math.round(audit.numericValue) : null,
+    value:
+      typeof audit.numericValue === "number"
+        ? Math.round(audit.numericValue)
+        : null,
     displayValue: (audit.displayValue as string) ?? null,
     score: typeof audit.score === "number" ? audit.score : null,
   };
@@ -54,7 +62,10 @@ function pct(cat: Record<string, unknown> | undefined): number | null {
   return typeof s === "number" ? Math.round(s * 100) : null;
 }
 
-function fieldCat(metrics: Record<string, unknown> | undefined, key: string): string | null {
+function fieldCat(
+  metrics: Record<string, unknown> | undefined,
+  key: string,
+): string | null {
   const m = metrics?.[key] as { category?: string } | undefined;
   return m?.category ?? null;
 }
@@ -67,7 +78,12 @@ export async function runPageSpeed(
     strategy,
     url,
     fetchedAt: new Date().toISOString(),
-    scores: { performance: null, accessibility: null, bestPractices: null, seo: null },
+    scores: {
+      performance: null,
+      accessibility: null,
+      bestPractices: null,
+      seo: null,
+    },
     lab: {
       lcp: metric(undefined),
       cls: metric(undefined),
@@ -76,12 +92,22 @@ export async function runPageSpeed(
       speedIndex: metric(undefined),
       tti: metric(undefined),
     },
-    field: { hasData: false, lcp: null, cls: null, inp: null, fcp: null, ttfb: null, overall: null },
+    field: {
+      hasData: false,
+      lcp: null,
+      cls: null,
+      inp: null,
+      fcp: null,
+      ttfb: null,
+      overall: null,
+    },
     opportunities: [],
   };
 
   const key = process.env.PAGESPEED_API_KEY || process.env.GOOGLE_API_KEY || "";
-  const endpoint = new URL("https://www.googleapis.com/pagespeedonline/v5/runPagespeed");
+  const endpoint = new URL(
+    "https://www.googleapis.com/pagespeedonline/v5/runPagespeed",
+  );
   endpoint.searchParams.set("url", url);
   endpoint.searchParams.set("strategy", strategy);
   for (const c of ["performance", "accessibility", "best-practices", "seo"]) {
@@ -95,7 +121,10 @@ export async function runPageSpeed(
     const res = await fetch(endpoint, { signal: controller.signal });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      return { ...base, error: `PageSpeed API returned ${res.status}. ${body.slice(0, 160)}` };
+      return {
+        ...base,
+        error: `PageSpeed API returned ${res.status}. ${body.slice(0, 160)}`,
+      };
     }
     const data = (await res.json()) as Record<string, any>;
     const lh = data.lighthouseResult || {};
@@ -129,7 +158,10 @@ export async function runPageSpeed(
         overall: data.loadingExperience?.overall_category ?? null,
       },
       opportunities: Object.values(audits)
-        .filter((a: any) => a?.details?.type === "opportunity" && a.numericValue > 100)
+        .filter(
+          (a: any) =>
+            a?.details?.type === "opportunity" && a.numericValue > 100,
+        )
         .map((a: any) => ({
           title: a.title as string,
           displayValue: (a.displayValue as string) ?? null,
@@ -139,7 +171,10 @@ export async function runPageSpeed(
         .slice(0, 8),
     };
   } catch (err) {
-    return { ...base, error: err instanceof Error ? err.message : "PageSpeed request failed." };
+    return {
+      ...base,
+      error: err instanceof Error ? err.message : "PageSpeed request failed.",
+    };
   } finally {
     clearTimeout(timer);
   }
