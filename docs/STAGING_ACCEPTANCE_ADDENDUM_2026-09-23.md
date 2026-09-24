@@ -128,3 +128,11 @@ No Production database, environment, deployment, or grant/RLS setting was change
 - Current crawler source manually handles redirects and calls `validateTarget` before every hop; this is source-level evidence for redirect SSRF protection. A runtime redirect-to-private-network test remains unverified and is not represented as passed.
 
 The public-URL audit gate is distinct from, and does not satisfy, ownership-dependent monitoring, scheduled crawling, or positive-remediation verification gates.
+
+## Public crawler safety completion — Preview only
+
+- A public redirect-to-loopback test used `https://httpbin.org/redirect-to?url=http://127.0.0.1`, after confirming its robots policy permits the test path. The bounded audit returned HTTP 200 with one recorded error page whose error was `Private network targets are blocked.` No loopback request was made. This is runtime evidence that redirect-hop SSRF protection rejects an otherwise public redirect target.
+- A concrete bypass defect was found: the public audit route accepted client-supplied `respectRobots: false`. Commit `7fab925` removes that caller control and enforces `respectRobots: true` server-side. The focused regression suite passed 5/5 and Preview deployment completed successfully.
+- Runtime enforcement retest sent `respectRobots: false` for `https://www.facebook.com` after inspecting its generic `User-agent: *` policy (`Disallow: /`). The audit returned HTTP 422 with no crawl evidence; no page was fetched. This is a pass for server-enforced robots compliance, not an authorization to crawl Facebook.
+
+Core public URL auditing is now evidenced separately from verified ownership operations. No Nyrius request, DNS action, Production deployment, or robots bypass occurred.
