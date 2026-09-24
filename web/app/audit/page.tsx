@@ -64,7 +64,9 @@ type AuditRunSummary = {
   completed_at: string | null;
 };
 
-export default function Home() {
+type AuditWorkbenchProps = { embedded?: boolean; initialUrl?: string; initialProjectId?: string; initialEnvironment?: string; };
+
+export function AuditWorkbench({ embedded = false, initialUrl, initialProjectId, initialEnvironment }: AuditWorkbenchProps = {}) {
   const [active, setActive] = useState<Module>("Overview");
   const [url, setUrl] = useState("");
   const [maxPages, setMaxPages] = useState(30);
@@ -99,7 +101,7 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setSettings(loaded);
     setMaxPages(loaded.crawlDefaults.maxPages);
-  }, []);
+  }, [initialUrl, initialProjectId, initialEnvironment]);
 
   const loadHistory = useCallback(async () => {
     setHistoryLoading(true);
@@ -122,11 +124,11 @@ export default function Home() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const requestedUrl = params.get("url");
+    const requestedUrl = initialUrl || params.get("url");
     const requestedModule = params.get("module") as Module | null;
     if (requestedUrl) setUrl(requestedUrl);
-    setProjectId(params.get("projectId") || "");
-    const requestedEnvironment = params.get("environment") || "";
+    setProjectId(params.get("projectId") || initialProjectId || "");
+    const requestedEnvironment = initialEnvironment || params.get("environment") || "";
     setEnvironment(["production", "staging", "development"].includes(requestedEnvironment) ? requestedEnvironment : "");
     if (requestedModule && MODULES.includes(requestedModule))
       setActive(requestedModule);
@@ -271,8 +273,8 @@ export default function Home() {
   };
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
+    <div className={embedded ? "audit-embedded" : "app-shell"}>
+      {!embedded && (<aside className="sidebar">
         <div className="brand">
           <div className="brand-mark">W</div>
           <div>
@@ -320,7 +322,7 @@ export default function Home() {
             <span>Crawl settings</span>
           </button>
         </div>
-      </aside>
+      </aside>)}
 
       <main className="main">
         <div className="topbar">
@@ -2888,4 +2890,10 @@ function Roadmap() {
       </div>
     </div>
   );
+}
+
+
+
+export default function AuditPage() {
+  return <AuditWorkbench />;
 }

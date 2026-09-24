@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import styles from "./workspace.module.css";
+import { AuditWorkbench } from "../audit/page";
 
 type Organization = { id: string; name: string; slug: string };
 type Membership = { role: string; organizations: Organization | null };
@@ -242,9 +243,10 @@ export default function WorkspacePage() {
     }).catch(() => { if (!cancelled) setMonitorStatus("Unable to load monitoring settings."); });
     return () => { cancelled = true; };
   }, [activeProject?.id]);
-  const projectTarget = activeProject
-    ? `/audit?url=${encodeURIComponent("https://" + activeProject.domain)}&projectId=${encodeURIComponent(activeProject.id)}&environment=${encodeURIComponent(activeProject.environment)}`
-    : "/onboarding";
+  const startAudit = () => {
+    if (activeProject) setActive("Audits");
+    else router.push("/onboarding");
+  };
   function clearMessages() {
     setError("");
     setNotice("");
@@ -967,7 +969,7 @@ export default function WorkspacePage() {
             <button onClick={() => setPaletteOpen(true)}>⌘ Search</button>
             <button
               className={styles.primary}
-              onClick={() => router.push(projectTarget)}
+              onClick={() => startAudit()}
             >
               {activeProject ? "Run audit" : "Create project"}
             </button>
@@ -989,7 +991,7 @@ export default function WorkspacePage() {
                 <div>
                   <button
                     className={styles.primary}
-                    onClick={() => router.push(projectTarget)}
+                    onClick={() => startAudit()}
                   >
                     {activeProject
                       ? "Start baseline audit"
@@ -1077,6 +1079,8 @@ export default function WorkspacePage() {
               </div>
             </section>
           </>
+        ) : active === "Audits" ? (
+          activeProject ? <AuditWorkbench embedded initialUrl={`https://${activeProject.domain}`} initialProjectId={activeProject.id} initialEnvironment={activeProject.environment} /> : <section className={styles.modulePanel}><div><h2>Create a project first</h2><button className={styles.primary} onClick={() => router.push("/onboarding")}>Create project</button></div></section>
         ) : active === "Projects" ? (
           projectsPanel
         ) : active === "Team & Access" ? (
@@ -1098,7 +1102,7 @@ export default function WorkspacePage() {
               <div className={styles.inlineForm}>
                 <button
                   className={styles.primary}
-                  onClick={() => router.push(projectTarget)}
+                  onClick={() => startAudit()}
                 >
                   {activeProject ? "Open audit workbench" : "Create project"}
                 </button>
@@ -1134,3 +1138,4 @@ export default function WorkspacePage() {
     </div>
   );
 }
+
