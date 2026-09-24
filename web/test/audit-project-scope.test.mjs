@@ -27,3 +27,9 @@ test('zero-page crawl is not assigned a fabricated score',()=>{
   assert.match(route,/err instanceof NoCrawlEvidenceError \? 422/);
   assert.match(ui,/This historical audit crawled no pages and has no valid health score/);
 });
+
+test('public audit API always enforces robots compliance',()=>{
+  assert.match(route,/respectRobots: true,/);
+  assert.doesNotMatch(route,/respectRobots: body\.respectRobots/);
+  assert.doesNotMatch(route,/respectRobots\?: boolean/);
+});

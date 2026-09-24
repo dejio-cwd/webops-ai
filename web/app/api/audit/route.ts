@@ -1,6 +1,6 @@
 // POST /api/audit -> full multi-page audit
-// Body: { url: string, maxPages?: number, maxDepth?: number, respectRobots?: boolean,
-// concurrency?: number, checkExternalLinks?: boolean }
+// Body: { url: string, maxPages?: number, maxDepth?: number,
+// concurrency?: number, checkExternalLinks?: boolean }. Robots compliance is enforced server-side.
 //
 // Runs a bounded, deadline-aware crawl entirely within the serverless function.
 // The route is authenticated because crawling is an expensive outbound operation.
@@ -166,7 +166,6 @@ export async function POST(request: Request) {
     environment?: string;
     maxPages?: number;
     maxDepth?: number;
-    respectRobots?: boolean;
     concurrency?: number;
     checkExternalLinks?: boolean;
   };
@@ -213,7 +212,7 @@ export async function POST(request: Request) {
       maxPages,
       maxDepth,
       concurrency,
-      respectRobots: body.respectRobots ?? true,
+      respectRobots: true,
       checkExternalLinks: body.checkExternalLinks ?? true,
       deadlineMs: 50000,
     });
