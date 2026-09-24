@@ -1,4 +1,4 @@
-import { generateText } from "@/lib/ai";
+import { generateText, AiNotConfiguredError } from "@/lib/ai";
 import { guardApiRequest, isGuardResponse } from "@/lib/security/api-guard";
 import { credentialFromRequest, enforceCredentialPolicy } from "@/lib/security/ai-credential";
 import { validateAiCredentialEndpoint } from "@/lib/security/outbound";
@@ -14,5 +14,5 @@ export async function POST(request: Request) {
   else if (body.opportunity) { const opportunity = body.opportunity; const evidence = `Issue: ${opportunity.title}\nCategory: ${opportunity.category}\nSeverity: ${opportunity.severity}\nAffected pages: ${opportunity.affectedCount}\nWhy: ${opportunity.why}\nRecommendation: ${opportunity.recommendation}\nEvidence: ${(opportunity.sampleEvidence || []).join("\n") || "none"}\nURLs: ${(opportunity.affectedUrls || []).slice(0, 6).join("\n")}`; user = mode === "fix" ? `${evidence}\nProduce a root-cause analysis, exact remediation steps, code/config example, validation procedure, and rollback note.` : `${evidence}\nExplain what this means, why these pages triggered it, its impact, and the highest-leverage next step.`; }
   else return Response.json({ error: "Provide an opportunity or summary context." }, { status: 400 });
   try { const rawCredential = await credentialFromRequest(actor, body); const credential = rawCredential ? enforceCredentialPolicy(rawCredential, body.model, "generate") : undefined; await validateAiCredentialEndpoint(credential); return Response.json(await generateText({ system: SYSTEM, user, credential, provider: body.provider, model: body.model, maxTokens: mode === "summary" ? 500 : 900 }), { headers: { "Cache-Control": "no-store" } }); }
-  catch { return Response.json({ error: "AI request could not be completed." }, { status: 502 }); }
+  catch (error) { if (error instanceof AiNotConfiguredError) return Response.json({ error: error.message }, { status: 503 }); return Response.json({ error: "AI request could not be completed." }, { status: 502 }); }
 }

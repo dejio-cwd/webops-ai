@@ -140,6 +140,13 @@ export function providerCatalog() {
 }
 
 /** Resolve a runnable config from an optional client credential, falling back to env vars. */
+export class AiNotConfiguredError extends Error {
+  constructor() {
+    super("No AI provider is configured. Add a provider credential in AI Studio (BYOK), or set a server provider key such as OPENROUTER_API_KEY.");
+    this.name = "AiNotConfiguredError";
+  }
+}
+
 export function resolveConfig(
   cred?: Credential | null,
   fallbackProvider?: string,
@@ -174,9 +181,7 @@ export function resolveConfig(
     (envDefault && avail.includes(envDefault) && envDefault) ||
     avail[0];
   if (!chosen) {
-    throw new Error(
-      "No AI provider configured. Add a key in AI Studio → Settings (BYOK), or set a server env var such as OPENROUTER_API_KEY.",
-    );
+    throw new AiNotConfiguredError();
   }
   const preset = PRESETS[chosen];
   return {

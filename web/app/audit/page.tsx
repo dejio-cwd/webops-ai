@@ -1171,6 +1171,38 @@ function FixCenter({
       setSaving(null);
     }
   };
+  const autoVerify = async (opp: Opportunity) => {
+    setSaveError("");
+    setSaving(opp.id);
+    try {
+      const response = await fetch("/api/fixes/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          auditId: audit.auditId,
+          projectId: projectId || undefined,
+          opportunityId: opp.id,
+          verificationNote: verificationNote || undefined,
+          rollbackPlan: rollbackPlan || undefined,
+        }),
+      });
+      const data = (await response.json()) as { verified?: boolean; reason?: string; error?: string };
+      if (!response.ok) throw new Error(data.error || "Re-crawl verification failed.");
+      if (data.verified) {
+        setStates((current) => ({ ...current, [opp.id]: "verified" }));
+        setVerifyId(null);
+      } else {
+        setSaveError(data.reason || "The re-crawl did not confirm this fix.");
+      }
+      return data.verified === true;
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Re-crawl verification failed.");
+      return false;
+    } finally {
+      setSaving(null);
+    }
+  };
+
   const bulkAdvance = async () => {
     const targets = audit.opportunities.filter((opp) => selectedIds.includes(opp.id));
     const drafts = targets.filter((opp) => (states[opp.id] || "draft") === "draft");
@@ -1346,7 +1378,12 @@ function FixCenter({
               </div>
               {verifyId === opp.id && (
                 <div className="ai-out">
-                  <b>Verify with a later completed audit</b>
+                  <b>Verify by re-crawling now</b>
+                  <p>Re-crawl the affected URLs and mark this fix verified only if the finding is actually gone. Requires the fix to be marked ready.</p>
+                  <button className="btn sm" disabled={saving === opp.id} onClick={() => void autoVerify(opp)}>
+                    {saving === opp.id ? "Re-crawling…" : "Auto-verify by re-crawling now"}
+                  </button>
+                  <b style={{ display: "block", marginTop: 12 }}>Or verify with a later completed audit</b>
                   <p>Select an audit that recrawled every affected URL and no longer reports this finding.</p>
                   <label>Follow-up audit
                     <select value={verificationAuditId} onChange={(event) => setVerificationAuditId(event.target.value)}>

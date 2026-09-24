@@ -1,4 +1,4 @@
-import { generateText, type ChatMessage } from "@/lib/ai";
+import { generateText, AiNotConfiguredError, type ChatMessage } from "@/lib/ai";
 import { guardApiRequest, isGuardResponse } from "@/lib/security/api-guard";
 import { credentialFromRequest, enforceCredentialPolicy } from "@/lib/security/ai-credential";
 import { validateAiCredentialEndpoint } from "@/lib/security/outbound";
@@ -11,5 +11,5 @@ export async function POST(request: Request) {
   const messages: ChatMessage[] = Array.isArray(body.messages) ? body.messages.filter((message: any) => message && typeof message.content === "string" && ["user", "assistant"].includes(message.role)).slice(-24) : [];
   if (!messages.length) return Response.json({ error: "At least one message is required." }, { status: 400 });
   try { const rawCredential = await credentialFromRequest(actor, body); const credential = rawCredential ? enforceCredentialPolicy(rawCredential, body.model, "chat") : undefined; await validateAiCredentialEndpoint(credential); const auditEvidence = body.auditContext ? `\n\nCurrent audit evidence (JSON, truncated):\n${JSON.stringify(body.auditContext).slice(0, 8_000)}` : ""; return Response.json(await generateText({ system: SYSTEM + auditEvidence, messages, credential, provider: body.provider, model: body.model, maxTokens: 1_400, temperature: 0.4 }), { headers: { "Cache-Control": "no-store" } }); }
-  catch { return Response.json({ error: "Chat request could not be completed." }, { status: 502 }); }
+  catch (error) { if (error instanceof AiNotConfiguredError) return Response.json({ error: error.message }, { status: 503 }); return Response.json({ error: "Chat request could not be completed." }, { status: 502 }); }
 }

@@ -7,7 +7,7 @@ process.env.CREDENTIAL_ENCRYPTION_KEY = "test-only-key-with-at-least-32-characte
 
 test("credential vault encrypts, decrypts, and rejects tampering", () => {
   const encrypted = encryptSecret("provider-secret");
-  assert.match(encrypted, /^v1\\.[^.]+\\.[^.]+\\.[^.]+$/);
+  assert.match(encrypted, /^v1\.[^.]+\.[^.]+\.[^.]+$/);
   assert.notEqual(encrypted, "provider-secret");
   assert.equal(decryptSecret(encrypted), "provider-secret");
   const parts = encrypted.split(".");

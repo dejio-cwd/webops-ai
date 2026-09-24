@@ -13,12 +13,20 @@ export function encryptSecret(secret: string) {
   const encrypted = Buffer.concat([cipher.update(secret, "utf8"), cipher.final()]);
   return ["v1", iv.toString("base64url"), cipher.getAuthTag().toString("base64url"), encrypted.toString("base64url")].join(".");
 }
+function fromBase64Url(part: string): Buffer {
+  // Reject non-canonical base64url so tampering (e.g. appended or padded characters
+  // that decode to identical bytes) is detected instead of silently ignored.
+  const buffer = Buffer.from(part, "base64url");
+  if (buffer.toString("base64url") !== part) throw new Error("Stored credential is invalid.");
+  return buffer;
+}
 export function decryptSecret(payload: string) {
-  const [version, iv, tag, encrypted] = payload.split(".");
-  if (version !== "v1" || !iv || !tag || !encrypted) throw new Error("Stored credential is invalid.");
-  const decipher = createDecipheriv("aes-256-gcm", key(), Buffer.from(iv, "base64url"));
-  decipher.setAuthTag(Buffer.from(tag, "base64url"));
-  return Buffer.concat([decipher.update(Buffer.from(encrypted, "base64url")), decipher.final()]).toString("utf8");
+  const parts = payload.split(".");
+  const [version, iv, tag, encrypted] = parts;
+  if (parts.length !== 4 || version !== "v1" || !iv || !tag || !encrypted) throw new Error("Stored credential is invalid.");
+  const decipher = createDecipheriv("aes-256-gcm", key(), fromBase64Url(iv));
+  decipher.setAuthTag(fromBase64Url(tag));
+  return Buffer.concat([decipher.update(fromBase64Url(encrypted)), decipher.final()]).toString("utf8");
 }
 function configuration() { const url = process.env.NEXT_PUBLIC_SUPABASE_URL; const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY; return url && serviceKey ? { url: url.replace(/\/$/, ""), serviceKey } : null; }
 function headers(serviceKey: string) { return { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json" }; }
