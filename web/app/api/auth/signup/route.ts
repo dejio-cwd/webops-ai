@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { guardApiRequest, isGuardResponse } from "@/lib/security/api-guard";
+import { publicSiteUrl } from "@/lib/site-url";
 
 export async function POST(request: Request) {
   const guard = await guardApiRequest(request, { bucket: "auth-signup", limit: 4, windowMs: 300_000, maxBodyBytes: 8_000, requireAuth: false });
@@ -11,7 +12,7 @@ export async function POST(request: Request) {
   if (!url || !key) return NextResponse.json({ error: "Authentication is not configured." }, { status: 503 });
 
   const signupUrl = new URL(`${url.replace(/\/$/, "")}/auth/v1/signup`);
-  signupUrl.searchParams.set("redirect_to", new URL("/sign-in?confirmed=1", request.url).toString());
+  signupUrl.searchParams.set("redirect_to", new URL("/sign-in?confirmed=1", publicSiteUrl(request)).toString());
   const upstream = await fetch(signupUrl, {
     method: "POST",
     headers: { apikey: key, "Content-Type": "application/json" },
