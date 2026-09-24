@@ -7,7 +7,7 @@ const ui=readFileSync(new URL('../app/audit/page.tsx',import.meta.url),'utf8');
 test('audit history and comparisons are filtered by selected project',()=>{
   assert.match(route,/const projectFilter = projectId \? `&project_id=eq\./);
   assert.equal((route.match(/\$\{projectFilter\}/g)||[]).length,2);
-  assert.match(ui,/setProjectId\(params\.get\("projectId"\) \|\| ""\)/);
+  assert.match(ui,/setProjectId\(params\.get\("projectId"\) \|\| initialProjectId \|\| ""\)/);
   assert.match(ui,/if \(routeReady\) void loadHistory\(\)/);
   assert.match(ui,/\/api\/audit\$\{projectId \? `\?projectId=/);
 });
