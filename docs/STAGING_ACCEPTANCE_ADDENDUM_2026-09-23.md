@@ -136,3 +136,4 @@ The public-URL audit gate is distinct from, and does not satisfy, ownership-depe
 - Runtime enforcement retest sent `respectRobots: false` for `https://www.facebook.com` after inspecting its generic `User-agent: *` policy (`Disallow: /`). The audit returned HTTP 422 with no crawl evidence; no page was fetched. This is a pass for server-enforced robots compliance, not an authorization to crawl Facebook.
 
 Core public URL auditing is now evidenced separately from verified ownership operations. No Nyrius request, DNS action, Production deployment, or robots bypass occurred.
+- Bounded-crawl cap retest sent oversized values (`maxPages: 99999`, `maxDepth: 999`, `concurrency: 999`) against `https://example.com` with robots enabled. The completed one-page audit reported server-clamped `maxPages: 2000` and `maxDepth: 12`; no unbounded crawl occurred.
