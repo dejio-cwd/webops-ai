@@ -10,12 +10,23 @@ import styles from "./audit-console.module.css";
 const VIEWS: Record<string,string>={Overview:"overview",Pages:"pages",Issues:"findings",Links:"links",Images:"images","Image AI":"ai_analyses",Performance:"performance","Core Web Vitals":"performance",Resources:"resources",Accessibility:"findings","Structured Data":"structured_data",Sitemap:"sitemap_urls",Content:"pages","AI Recommendations":"ai_analyses",Opportunities:"opportunities",Reports:"reports","Crawl Comparison":"comparison","Crawl Progress":"tasks",Settings:"settings"};
 const aliases:Record<string,string>={Audits:"Overview",Crawler:"Pages",SEO:"Issues",Assets:"Images","Fix Center":"Issues",Analytics:"Overview",Integrations:"Settings"};
 type Row=EvidenceRecord<Record<string,unknown>>;
+type JsonObject=Record<string,unknown>;
+type JobListResponse={jobs:AuditJob[]};
+type ConnectionsResponse={credentials:{id:string;display_name:string;provider:string;model_allowlist:string[]}[]};
+type JobResponse={job:AuditJob;progress:Progress};
+type RecordsResponse={records:Row[];hasMore?:boolean};
 const display=(value:unknown)=>value===null || value===undefined?"Not measured":typeof value==="object"?JSON.stringify(value):String(value);
 const bytes=(value:unknown)=>typeof value==="number"?`${(value/1024).toFixed(1)} KB`:"Not measured";
-async function requestJson(url:string,init?:RequestInit){
+async function requestJson<T extends JsonObject = JsonObject>(url:string,init?:RequestInit):Promise<T>{
  let res=await fetch(url,{...init,cache:"no-store"});
  if(res.status===401){const refreshed=await fetch("/api/auth/refresh",{method:"POST"});if(refreshed.ok)res=await fetch(url,{...init,cache:"no-store"});}
- const body=await res.json();if(!res.ok)throw new Error(body.error || "Request failed.");return body;
+ const raw=await res.text();
+ let body:JsonObject={};
+ if(raw.trim()){
+  try{body=JSON.parse(raw) as Record<string,unknown>;}catch{throw new Error(res.ok?"The server returned an invalid response.":`Request failed (HTTP ${res.status}).`);}
+ }
+ if(!res.ok)throw new Error(typeof body.error === "string" ? body.error : `Request failed (HTTP ${res.status}).`);
+ return body as T;
 }
 const jsonRequest=(method:string,body:unknown):RequestInit=>({method,headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
 
@@ -28,10 +39,10 @@ export function AuditConsole({projectId="",initialUrl="",initialJobId="",initial
  const [providers,setProviders]=useState<{id:string;display_name:string;provider:string;model_allowlist:string[]}[]>([]);
  const [before,setBefore]=useState("");const [comparison,setComparison]=useState<Record<string,unknown>|null>(null);
  const kind=VIEWS[view] || "pages";
- const loadJobs=useCallback(async()=>{const data=await requestJson(`/api/jobs${projectId?`?projectId=${projectId}`:""}`);setJobs(data.jobs || []);setJobId(current=>current || data.jobs?.[0]?.id || "");},[projectId]);
+ const loadJobs=useCallback(async()=>{const data=await requestJson<JobListResponse>(`/api/jobs${projectId?`?projectId=${projectId}`:""}`);setJobs(data.jobs || []);setJobId(current=>current || data.jobs?.[0]?.id || "");},[projectId]);
  // Load saved audit state from the server when project scope changes.
  // eslint-disable-next-line react-hooks/set-state-in-effect
- useEffect(()=>{let active=true;void loadJobs().catch(e=>active&&setError(e.message));void requestJson(`/api/ai/connections${projectId?`?projectId=${projectId}`:""}`).then(data=>active&&setProviders(data.credentials || [])).catch(()=>{});return()=>{active=false;};},[loadJobs,projectId]);
+ useEffect(()=>{let active=true;void loadJobs().catch(e=>active&&setError(e.message));void requestJson<ConnectionsResponse>(`/api/ai/connections${projectId?`?projectId=${projectId}`:""}`).then(data=>active&&setProviders(data.credentials || [])).catch(()=>{});return()=>{active=false;};},[loadJobs,projectId]);
  useEffect(()=>{
   // Workspace navigation changes the selected evidence view without losing the job.
   // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -39,7 +50,7 @@ export function AuditConsole({projectId="",initialUrl="",initialJobId="",initial
  },[initialView]);
  useEffect(()=>{
   if(!jobId)return;let active=true;let timer:ReturnType<typeof setTimeout>;
-  const poll=async()=>{try{const data=await requestJson(`/api/jobs/${jobId}`);if(!active)return;setJob(data.job);setProgress(data.progress);if(["QUEUED","RUNNING","CANCELLING"].includes(data.job.status))timer=setTimeout(poll,2500);}catch(e){if(active)setError(e instanceof Error?e.message:"Unable to load progress.");}};
+  const poll=async()=>{try{const data=await requestJson<JobResponse>(`/api/jobs/${jobId}`);if(!active)return;setJob(data.job);setProgress(data.progress);if(["QUEUED","RUNNING","CANCELLING"].includes(data.job.status))timer=setTimeout(poll,2500);}catch(e){if(active)setError(e instanceof Error?e.message:"Unable to load progress.");}};
   void poll();return()=>{active=false;clearTimeout(timer);};
  },[jobId,notice]);
  const loadRows=useCallback(async()=>{
@@ -47,16 +58,16 @@ export function AuditConsole({projectId="",initialUrl="",initialJobId="",initial
   setLoading(true);try{
    const params=new URLSearchParams({kind,offset:String(offset),limit:"50"});if(query)params.set("q",query);if(severity)params.set("severity",severity);if(status)params.set("status",status);if(source)params.set("source_url",source);
    if(view==="Accessibility")params.set("category","accessibility");else if(category)params.set("category",category);
-   const data=await requestJson(`/api/jobs/${jobId}/records?${params}`);setRows(data.records || []);setHasMore(!!data.hasMore);
+   const data=await requestJson<RecordsResponse>(`/api/jobs/${jobId}/records?${params}`);setRows(data.records || []);setHasMore(!!data.hasMore);
   }catch(e){setError(e instanceof Error?e.message:"Unable to load evidence.");}finally{setLoading(false);}
  },[jobId,kind,offset,query,severity,status,source,view,category]);
  useEffect(()=>{let active=true;const timer=setTimeout(()=>{if(active)void loadRows();},200);return()=>{active=false;clearTimeout(timer);};},[loadRows,job?.status]);
  const navigate=(next:string,filter="")=>{setView(next);setOffset(0);setSource(filter);setQuery("");setCategory("");setSeverity("");setStatus("");setSelected([]);setDetail(null);};
- const launch=async(mode?:AuditMode)=>{setBusy(true);setError("");try{const chosen=mode?{...modeConfig(mode),credentialId:config.credentialId,model:config.model}:config;const data=await requestJson("/api/jobs",jsonRequest("POST",{url,projectId:projectId || undefined,config:chosen}));setJobId(data.jobId);setJob(null);setProgress(null);setView("Overview");setNotice("Audit queued. It continues on the server when this page closes.");await loadJobs();}catch(e){setError(e instanceof Error?e.message:"Unable to queue audit.");}finally{setBusy(false);}};
+ const launch=async(mode?:AuditMode)=>{setBusy(true);setError("");try{const chosen=mode?{...modeConfig(mode),credentialId:config.credentialId,model:config.model}:config;const data=await requestJson<{jobId:string}>("/api/jobs",jsonRequest("POST",{url,projectId:projectId || undefined,config:chosen}));setJobId(data.jobId);setJob(null);setProgress(null);setView("Overview");setNotice("Audit queued. It continues on the server when this page closes.");await loadJobs();}catch(e){setError(e instanceof Error?e.message:"Unable to queue audit.");}finally{setBusy(false);}};
  const control=async(action:string)=>{setBusy(true);try{await requestJson(`/api/jobs/${jobId}`,jsonRequest("PATCH",{action}));setNotice(`${action} requested at ${new Date().toLocaleTimeString()}`);}catch(e){setError((e as Error).message);}finally{setBusy(false);}};
  const review=async(keys:string[],next:string,alt?:string)=>{try{await requestJson(`/api/jobs/${jobId}/records`,jsonRequest("PATCH",{kind,keys,status:next,editedAlt:alt}));setDetail(null);setSelected([]);await loadRows();}catch(e){setError((e as Error).message);}};
  const generate=async(keys:string[])=>{setBusy(true);try{await requestJson(`/api/jobs/${jobId}/ai`,jsonRequest("POST",{kind:kind==="images"?"ai_image":"ai_page",keys,credentialId:config.credentialId,model:config.model}));setNotice("AI analysis queued. Open AI Recommendations to review its progress and results.");}catch(e){setError((e as Error).message);}finally{setBusy(false);}};
- const compare=async()=>{setBusy(true);try{const data=await requestJson(`/api/jobs/${jobId}/compare?before=${before}`);setComparison(data);}catch(e){setError((e as Error).message);}finally{setBusy(false);}};
+ const compare=async()=>{setBusy(true);try{const data=await requestJson<JsonObject>(`/api/jobs/${jobId}/compare?before=${before}`);setComparison(data);}catch(e){setError((e as Error).message);}finally{setBusy(false);}};
  const patch=<K extends keyof AuditConfig>(key:K,value:AuditConfig[K])=>setConfig(c=>({...c,[key]:value}));
  const selectedAll=rows.length>0 && selected.length===rows.length;
  const health=job?.summary.health as {overall:number;grade:string;categories:Record<string,number>}|null;
