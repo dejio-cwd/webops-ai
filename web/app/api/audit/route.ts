@@ -5,7 +5,10 @@
 // Queues a durable audit; evidence is persisted incrementally by workers.
 // The route is authenticated because crawling is an expensive outbound operation.
 
-import { launchAudit } from "@/lib/pipeline/launch";
+// NOTE: launchAudit is imported LAZILY inside POST — its transitive graph pulls in
+// playwright-core, @sparticuz/chromium, sharp, and the workflow SDK. Keeping that
+// out of the module top prevents an OOM cold-start on the Vercel serverless
+// invocation that returns 500 with an empty body.
 import { guard } from "@/lib/route-guard";
 import { compareAudits } from "@/lib/audit-comparison";
 import type { AuditResult } from "@/lib/types";
@@ -201,6 +204,7 @@ export const POST = guard("audit.POST", async function POST(request: Request) {
         return Response.json({ error: "Audit environment must match the selected project." }, { status: 400 });
       associatedProjectId = project.id;
     }
+    const { launchAudit } = await import("@/lib/pipeline/launch");
     const jobId = await launchAudit(actor.id, { url: withScheme, projectId: associatedProjectId || undefined, config: { maxPages: body.maxPages, maxDepth: body.maxDepth, concurrency: body.concurrency, checkExternalLinks: body.checkExternalLinks, respectRobots: true } });
     return Response.json({ jobId, status: "QUEUED" }, { status: 202 });
   } catch (error) {

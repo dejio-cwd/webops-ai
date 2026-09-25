@@ -2,8 +2,12 @@ import { database, databaseConfig, isUuid } from "@/lib/database";
 import { guard } from "@/lib/route-guard";
 import { guardApiRequest, isGuardResponse } from "@/lib/security/api-guard";
 import { projectAccess } from "@/lib/security/project-access";
-import { launchAudit } from "@/lib/pipeline/launch";
 import type { AuditConfig } from "@/lib/pipeline/config";
+// NOTE: launchAudit is imported LAZILY inside POST — its transitive graph pulls in
+// playwright-core, @sparticuz/chromium, sharp, and the workflow SDK. Importing it
+// at the module top wedged this route into an OOM/cold-start crash on Vercel that
+// returned 500 with an empty body (X-Vercel-Id showed a double-region marker), even
+// though the handler itself is tiny. GET never needs it; POST dynamically imports.
 export const runtime="nodejs";export const maxDuration=60;
 export const GET = guard("jobs.GET", async function GET(request:Request) {
  const actor=await guardApiRequest(request,{bucket:"jobs-read",limit:120,requireAuth:true});if(isGuardResponse(actor))return actor;if(!actor)return Response.json({error:"Sign in required."},{status:401});
@@ -17,6 +21,11 @@ export const GET = guard("jobs.GET", async function GET(request:Request) {
 });
 export const POST = guard("jobs.POST", async function POST(request:Request) {
  const actor=await guardApiRequest(request,{bucket:"jobs-create",limit:10,windowMs:300000,maxBodyBytes:32000,requireAuth:true});if(isGuardResponse(actor))return actor;if(!actor)return Response.json({error:"Sign in required."},{status:401});
- try{const body=await request.json() as {url?:string;projectId?:string;config?:Partial<AuditConfig>};const id=await launchAudit(actor.id,body);return Response.json({jobId:id,url:`/audits?jobId=${id}`},{status:202});}
+ try{
+   const body=await request.json() as {url?:string;projectId?:string;config?:Partial<AuditConfig>};
+   const { launchAudit } = await import("@/lib/pipeline/launch");
+   const id=await launchAudit(actor.id,body);
+   return Response.json({jobId:id,url:`/audits?jobId=${id}`},{status:202});
+ }
  catch(e){return Response.json({error:e instanceof Error?e.message:"Unable to queue the audit."},{status:400});}
 });
