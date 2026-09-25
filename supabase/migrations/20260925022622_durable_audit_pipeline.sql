@@ -1,7 +1,7 @@
 -- Additive migration against the inspected production schema. Existing audit
 -- results and statuses remain readable by the previous application version.
 begin;
-create table public.audit_jobs (
+create table if not exists public.audit_jobs (
   id uuid primary key references public.audit_runs(id) on delete cascade,
   owner_id uuid not null references auth.users(id),
   project_id uuid references public.projects(id) on delete set null,
@@ -17,10 +17,10 @@ create table public.audit_jobs (
   updated_at timestamptz not null default now(),
   completed_at timestamptz
 );
-create index audit_jobs_project_created on public.audit_jobs(project_id, created_at desc);
-create index audit_jobs_owner_created on public.audit_jobs(owner_id, created_at desc);
+create index if not exists audit_jobs_project_created on public.audit_jobs(project_id, created_at desc);
+create index if not exists audit_jobs_owner_created on public.audit_jobs(owner_id, created_at desc);
 
-create table public.crawl_tasks (
+create table if not exists public.crawl_tasks (
   id uuid primary key default gen_random_uuid(),
   job_id uuid not null references public.audit_jobs(id) on delete cascade,
   kind text not null,
@@ -39,12 +39,12 @@ create table public.crawl_tasks (
   created_at timestamptz not null default now(),
   unique(job_id, kind, url_key)
 );
-create index crawl_tasks_claim on public.crawl_tasks(job_id, priority, available_at) where status in ('pending','leased');
-create index crawl_tasks_progress on public.crawl_tasks(job_id, kind, status);
+create index if not exists crawl_tasks_claim on public.crawl_tasks(job_id, priority, available_at) where status in ('pending','leased');
+create index if not exists crawl_tasks_progress on public.crawl_tasks(job_id, kind, status);
 
 -- Each page, link occurrence, image asset/usage, resource, finding, AI output,
 -- and report has an independently addressable row, never one crawl-sized blob.
-create table public.audit_records (
+create table if not exists public.audit_records (
   job_id uuid not null references public.audit_jobs(id) on delete cascade,
   kind text not null,
   key text not null,
@@ -59,9 +59,9 @@ create table public.audit_records (
   updated_at timestamptz not null default now(),
   primary key(job_id, kind, key)
 );
-create index audit_records_filter on public.audit_records(job_id, kind, category, severity, status);
-create index audit_records_url on public.audit_records(job_id, kind, md5(url));
-create index audit_records_source on public.audit_records(job_id, kind, md5(source_url));
+create index if not exists audit_records_filter on public.audit_records(job_id, kind, category, severity, status);
+create index if not exists audit_records_url on public.audit_records(job_id, kind, md5(url));
+create index if not exists audit_records_source on public.audit_records(job_id, kind, md5(source_url));
 
 alter table public.audit_jobs enable row level security;
 alter table public.crawl_tasks enable row level security;
@@ -69,7 +69,7 @@ alter table public.audit_records enable row level security;
 revoke all on public.audit_jobs, public.crawl_tasks, public.audit_records from public, anon, authenticated;
 grant all on public.audit_jobs, public.crawl_tasks, public.audit_records to service_role;
 
-create function public.enqueue_audit_tasks(p_job uuid, p_tasks jsonb) returns integer
+create or replace function public.enqueue_audit_tasks(p_job uuid, p_tasks jsonb) returns integer
 language plpgsql security invoker set search_path = public as $$
 declare j public.audit_jobs; t jsonb; cap integer; n integer; inserted integer; total integer := 0;
 begin
@@ -102,7 +102,7 @@ begin
   return total;
 end $$;
 
-create function public.create_audit_job(p_id uuid, p_owner uuid, p_project uuid, p_url text, p_config jsonb) returns uuid
+create or replace function public.create_audit_job(p_id uuid, p_owner uuid, p_project uuid, p_url text, p_config jsonb) returns uuid
 language plpgsql security invoker set search_path = public as $$
 begin
   insert into public.audit_runs(id,owner_id,project_id,url,audit_id,engine_version,status)
@@ -112,7 +112,7 @@ begin
   return p_id;
 end $$;
 
-create function public.claim_audit_tasks(p_job uuid) returns setof public.crawl_tasks
+create or replace function public.claim_audit_tasks(p_job uuid) returns setof public.crawl_tasks
 language plpgsql security invoker set search_path = public as $$
 declare j public.audit_jobs; slots integer;
 begin
@@ -135,7 +135,7 @@ begin
   returning t.*;
 end $$;
 
-create function public.commit_audit_task(p_task uuid, p_token uuid, p_records jsonb, p_tasks jsonb, p_error text default null, p_metadata jsonb default '{}') returns boolean
+create or replace function public.commit_audit_task(p_task uuid, p_token uuid, p_records jsonb, p_tasks jsonb, p_error text default null, p_metadata jsonb default '{}') returns boolean
 language plpgsql security invoker set search_path = public as $$
 declare t public.crawl_tasks; j public.audit_jobs; r jsonb;
 begin
@@ -164,7 +164,7 @@ begin
   return true;
 end $$;
 
-create function public.audit_job_progress(p_job uuid) returns jsonb
+create or replace function public.audit_job_progress(p_job uuid) returns jsonb
 language sql security invoker set search_path = public as $$
   select jsonb_build_object(
     'pending',count(*) filter(where status='pending'), 'running',count(*) filter(where status='leased'),
@@ -176,7 +176,7 @@ language sql security invoker set search_path = public as $$
   from public.crawl_tasks where job_id=p_job;
 $$;
 
-create function public.control_audit_job(p_job uuid, p_action text) returns text
+create or replace function public.control_audit_job(p_job uuid, p_action text) returns text
 language plpgsql security invoker set search_path = public as $$
 declare j public.audit_jobs; next_status text;
 begin
@@ -193,7 +193,7 @@ begin
   return next_status;
 end $$;
 
-create function public.finalize_audit_job(p_job uuid, p_summary jsonb, p_success boolean, p_partial boolean) returns boolean
+create or replace function public.finalize_audit_job(p_job uuid, p_summary jsonb, p_success boolean, p_partial boolean) returns boolean
 language plpgsql security invoker set search_path = public as $$
 declare j public.audit_jobs;
 begin

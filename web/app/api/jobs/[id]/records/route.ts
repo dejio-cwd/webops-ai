@@ -16,7 +16,7 @@ export async function GET(request:Request,context:Context){
   const q=params.get("q")?.replace(/[*,()]/g,"");if(q)path+=`&url=ilike.*${encodeURIComponent(q)}*`;
   const rows=await database<EvidenceRecord[]>(path);
   return Response.json({records:rows.slice(0,limit),hasMore:rows.length>limit,offset},{headers:{"Cache-Control":"no-store"}});
- }catch{return Response.json({error:"Unable to load evidence."},{status:503});}
+ }catch(e){return Response.json({error:e instanceof Error?`Unable to load evidence: ${e.message}`:"Unable to load evidence."},{status:503});}
 }
 export async function PATCH(request:Request,context:Context){
  const actor=await guardApiRequest(request,{bucket:"record-review",limit:60,requireAuth:true});if(isGuardResponse(actor))return actor;if(!actor)return Response.json({error:"Sign in required."},{status:401});
@@ -25,5 +25,5 @@ export async function PATCH(request:Request,context:Context){
  if(!["findings","ai_analyses"].includes(body.kind) || !["open","ignored","resolved","accepted","rejected"].includes(body.status) || !Array.isArray(body.keys) || !body.keys.length || body.keys.length>100 || body.keys.some(k=>!/^[a-f0-9]{40}$/.test(k)))return Response.json({error:"Invalid review request."},{status:400});
  const rows=await database<EvidenceRecord<Record<string,unknown>>[]>(`audit_records?job_id=eq.${id}&kind=eq.${body.kind}&key=in.(${body.keys.join(",")})`);
  for(const row of rows){const data={...row.data,review:body.status,reviewedAt:new Date().toISOString(),reviewedBy:actor.id,...(typeof body.editedAlt==="string"?{editedAlt:body.editedAlt.slice(0,2000)}:{})};await database(`audit_records?job_id=eq.${id}&kind=eq.${body.kind}&key=eq.${row.key}`,{method:"PATCH",body:JSON.stringify({status:body.status,data})});}
- return Response.json({updated:rows.length});}catch{return Response.json({error:"Unable to save review."},{status:503});}
+ return Response.json({updated:rows.length});}catch(e){return Response.json({error:e instanceof Error?`Unable to save review: ${e.message}`:"Unable to save review."},{status:503});}
 }

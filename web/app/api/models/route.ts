@@ -10,7 +10,9 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   const configured = availableProviders();
-  const freeModels = await discoverFreeModels();
+  // OpenRouter probe can throw on network hiccups; treat as an empty list so the
+  // provider grid still renders instead of collapsing the workspace with a 500.
+  const freeModels = await discoverFreeModels().catch(() => []);
   return Response.json(
     {
       configuredProviders: configured,

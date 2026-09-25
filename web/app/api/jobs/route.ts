@@ -12,7 +12,7 @@ export async function GET(request:Request){
   const offset=Math.max(0,Number(params.get("offset"))||0);
   const jobs=await database(`audit_jobs?${project?`project_id=eq.${project}`:`owner_id=eq.${actor.id}`}&order=created_at.desc&limit=30&offset=${offset}`);
   return Response.json({jobs},{headers:{"Cache-Control":"no-store"}});
- }catch{return Response.json({error:"Unable to load audit jobs. Check that the pipeline migration is installed."},{status:503});}
+ }catch(e){const m=e instanceof Error?e.message:String(e);const gap=/PGRST202|does not exist|audit_jobs/i.test(m);return Response.json({error:gap?"Audit pipeline migration is not installed. Apply supabase/migrations/20260925022622_durable_audit_pipeline.sql.":`Unable to load audit jobs: ${m}`},{status:503});}
 }
 export async function POST(request:Request){
  const actor=await guardApiRequest(request,{bucket:"jobs-create",limit:10,windowMs:300000,maxBodyBytes:32000,requireAuth:true});if(isGuardResponse(actor))return actor;if(!actor)return Response.json({error:"Sign in required."},{status:401});
