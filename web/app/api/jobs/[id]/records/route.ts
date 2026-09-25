@@ -1,10 +1,11 @@
 import { database, isUuid } from "@/lib/database";
+import { guard } from "@/lib/route-guard";
 import { guardApiRequest, isGuardResponse } from "@/lib/security/api-guard";
 import { authorizeJob } from "@/lib/pipeline/store";
 import type { EvidenceRecord } from "@/lib/pipeline/types";
 const kinds=new Set(["pages","links","link_targets","images","image_usage","resources","resource_usage","findings","opportunities","structured_data","sitemaps","sitemap_urls","policy","restrictions","performance","ai_analyses","ai_requests","reports"]);
 type Context={params:Promise<{id:string}>};
-export async function GET(request:Request,context:Context){
+export const GET = guard("jobs/id/records.GET", async function GET(request:Request,context:Context) {
  const actor=await guardApiRequest(request,{bucket:"audit-records",limit:180,requireAuth:true});if(isGuardResponse(actor))return actor;if(!actor)return Response.json({error:"Sign in required."},{status:401});
  try{
   const {id}=await context.params;const job=isUuid(id)?await authorizeJob(id,actor.id):null;if(!job)return Response.json({error:"Audit not found."},{status:404});
@@ -17,8 +18,8 @@ export async function GET(request:Request,context:Context){
   const rows=await database<EvidenceRecord[]>(path);
   return Response.json({records:rows.slice(0,limit),hasMore:rows.length>limit,offset},{headers:{"Cache-Control":"no-store"}});
  }catch(e){return Response.json({error:e instanceof Error?`Unable to load evidence: ${e.message}`:"Unable to load evidence."},{status:503});}
-}
-export async function PATCH(request:Request,context:Context){
+});
+export const PATCH = guard("jobs/id/records.PATCH", async function PATCH(request:Request,context:Context) {
  const actor=await guardApiRequest(request,{bucket:"record-review",limit:60,requireAuth:true});if(isGuardResponse(actor))return actor;if(!actor)return Response.json({error:"Sign in required."},{status:401});
  try{const {id}=await context.params;if(!isUuid(id) || !await authorizeJob(id,actor.id,true))return Response.json({error:"Audit access denied."},{status:403});
  const body=await request.json() as {kind:string;keys:string[];status:string;editedAlt?:string};
@@ -26,4 +27,4 @@ export async function PATCH(request:Request,context:Context){
  const rows=await database<EvidenceRecord<Record<string,unknown>>[]>(`audit_records?job_id=eq.${id}&kind=eq.${body.kind}&key=in.(${body.keys.join(",")})`);
  for(const row of rows){const data={...row.data,review:body.status,reviewedAt:new Date().toISOString(),reviewedBy:actor.id,...(typeof body.editedAlt==="string"?{editedAlt:body.editedAlt.slice(0,2000)}:{})};await database(`audit_records?job_id=eq.${id}&kind=eq.${body.kind}&key=eq.${row.key}`,{method:"PATCH",body:JSON.stringify({status:body.status,data})});}
  return Response.json({updated:rows.length});}catch(e){return Response.json({error:e instanceof Error?`Unable to save review: ${e.message}`:"Unable to save review."},{status:503});}
-}
+});

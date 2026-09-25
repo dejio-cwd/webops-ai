@@ -9,7 +9,7 @@ const load = async (path, prefix = "") => {
 };
 const access = await load("../lib/security/project-access.ts");
 globalThis.__access = access;
-const guard = 'const guardApiRequest = async request => ({ id: request.headers.get("x-test-actor") }); const isGuardResponse = () => false; const { projectAccess, canManageProject } = globalThis.__access;\n';
+const guard = 'const guardApiRequest = async request => ({ id: request.headers.get("x-test-actor") }); const isGuardResponse = () => false; const { projectAccess, canManageProject } = globalThis.__access; const guard = (_name, handler) => handler;\n';
 const monitoring = await load("../app/api/monitoring/route.ts", guard);
 const alerts = await load("../app/api/monitoring/alerts/route.ts", guard);
 const projectId = "11111111-1111-4111-8111-111111111111";

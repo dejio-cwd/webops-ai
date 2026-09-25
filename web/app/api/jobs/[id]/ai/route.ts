@@ -1,10 +1,11 @@
 import { start } from "workflow/api";
+import { guard } from "@/lib/route-guard";
 import { recommendationWorkflow } from "@/workflows/recommendations";
 import { database,isUuid } from "@/lib/database";
 import { guardApiRequest,isGuardResponse } from "@/lib/security/api-guard";
 import { authorizeJob,saveRecords,recordKey } from "@/lib/pipeline/store";
 import type { EvidenceRecord } from "@/lib/pipeline/types";
-export async function POST(request:Request,{params}:{params:Promise<{id:string}>}){
+export const POST = guard("jobs/id/ai.POST", async function POST(request:Request,{params}:{params:Promise<{id:string}>}) {
  const actor=await guardApiRequest(request,{bucket:"ai-review-batch",limit:10,windowMs:300000,maxBodyBytes:16000,requireAuth:true});if(isGuardResponse(actor))return actor;if(!actor)return Response.json({error:"Sign in required."},{status:401});
  try{const {id}=await params;const job=isUuid(id)?await authorizeJob(id,actor.id,true):null;if(!job)return Response.json({error:"Audit access denied."},{status:403});
  const body=await request.json() as {kind:string;keys:string[];credentialId?:string;model?:string};
@@ -15,4 +16,4 @@ export async function POST(request:Request,{params}:{params:Promise<{id:string}>
  const run=await start(recommendationWorkflow,[id,requestId,actor.id,body.kind,rows.map(r=>r.url),body.credentialId || "",body.model || ""]);
  return Response.json({requestId,runId:run.runId},{status:202});
  }catch{return Response.json({error:"Unable to queue AI analysis."},{status:503});}
-}
+});

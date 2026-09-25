@@ -1,8 +1,9 @@
 import { database, databaseConfig } from "@/lib/database";
+import { guard } from "@/lib/route-guard";
 import { guardApiRequest, isGuardResponse } from "@/lib/security/api-guard";
 import { projectAccess } from "@/lib/security/project-access";
 
-export async function GET(request: Request) {
+export const GET = guard("ai/connections.GET", async function GET(request: Request) {
   const actor = await guardApiRequest(request, { bucket: "ai-connections", limit: 60, requireAuth: true });
   if (isGuardResponse(actor)) return actor;
   if (!actor) return Response.json({ error: "Sign in to select an AI provider." }, { status: 401 });
@@ -22,4 +23,4 @@ export async function GET(request: Request) {
   } catch {
     return Response.json({ error: "Unable to load saved AI providers." }, { status: 503 });
   }
-}
+});

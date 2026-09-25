@@ -1,4 +1,5 @@
 import { guardApiRequest, isGuardResponse } from "@/lib/security/api-guard";
+import { guard } from "@/lib/route-guard";
 import { projectAccess, canManageProject } from "@/lib/security/project-access";
 type Config = { url: string; key: string };
 function config(): Config | null {
@@ -14,7 +15,7 @@ function headers(key: string, prefer?: string) {
     ...(prefer ? { Prefer: prefer } : {}),
   };
 }
-export async function GET(request: Request) {
+export const GET = guard("monitoring/alerts.GET", async function GET(request: Request) {
   const actor = await guardApiRequest(request, {
     bucket: "monitoring-alerts-read",
     limit: 60,
@@ -51,8 +52,8 @@ export async function GET(request: Request) {
   } catch {
     return Response.json({ alerts: [] }, { headers: { "Cache-Control": "no-store" } });
   }
-}
-export async function PATCH(request: Request) {
+});
+export const PATCH = guard("monitoring/alerts.PATCH", async function PATCH(request: Request) {
   const actor = await guardApiRequest(request, {
     bucket: "monitoring-alerts-write",
     limit: 30,
@@ -116,4 +117,4 @@ export async function PATCH(request: Request) {
   return updated
     ? Response.json({ alert: updated })
     : Response.json({ error: "Alert not found." }, { status: 404 });
-}
+});

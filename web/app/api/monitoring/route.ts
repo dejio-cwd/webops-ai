@@ -1,4 +1,5 @@
 import { guardApiRequest, isGuardResponse } from "@/lib/security/api-guard";
+import { guard } from "@/lib/route-guard";
 import { projectAccess, canManageProject } from "@/lib/security/project-access";
 type Config = { url: string; key: string };
 function config(): Config | null {
@@ -14,7 +15,7 @@ function headers(key: string, prefer?: string) {
     ...(prefer ? { Prefer: prefer } : {}),
   };
 }
-export async function GET(request: Request) {
+export const GET = guard("monitoring.GET", async function GET(request: Request) {
   const actor = await guardApiRequest(request, {
     bucket: "monitoring-read",
     limit: 60,
@@ -53,8 +54,8 @@ export async function GET(request: Request) {
     // the UI degrades gracefully when the datastore is unreachable.
     return Response.json({ monitors: [] }, { headers: { "Cache-Control": "no-store" } });
   }
-}
-export async function POST(request: Request) {
+});
+export const POST = guard("monitoring.POST", async function POST(request: Request) {
   const actor = await guardApiRequest(request, {
     bucket: "monitoring-write",
     limit: 12,
@@ -122,4 +123,4 @@ export async function POST(request: Request) {
       { status: 502 },
     );
   return Response.json({ monitor: (await response.json())[0] || null });
-}
+});

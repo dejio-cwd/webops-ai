@@ -6,6 +6,7 @@
 // The route is authenticated because crawling is an expensive outbound operation.
 
 import { launchAudit } from "@/lib/pipeline/launch";
+import { guard } from "@/lib/route-guard";
 import { compareAudits } from "@/lib/audit-comparison";
 import type { AuditResult } from "@/lib/types";
 import { guardApiRequest, isGuardResponse } from "@/lib/security/api-guard";
@@ -56,7 +57,7 @@ async function projectAccess(config: SupabaseConfig, projectId: string, actorId:
   return { ...project, role: members[0]?.role || null };
 }
 
-export async function GET(request: Request) {
+export const GET = guard("audit.GET", async function GET(request: Request) {
   const actor = await guardApiRequest(request, {
     bucket: "audit-history-read",
     limit: 60,
@@ -139,9 +140,9 @@ export async function GET(request: Request) {
     { runs: rows },
     { headers: { "Cache-Control": "no-store" } },
   );
-}
+});
 
-export async function POST(request: Request) {
+export const POST = guard("audit.POST", async function POST(request: Request) {
   const actor = await guardApiRequest(request, {
     bucket: "audit-run",
     limit: 8,
@@ -207,4 +208,4 @@ export async function POST(request: Request) {
     // as a 400 instead of leaking a Vercel 500 with no context.
     return Response.json({ error: error instanceof Error ? error.message : "Unable to save and queue audit." }, { status: 400 });
   }
-}
+});

@@ -21,11 +21,22 @@ async function requestJson<T extends JsonObject = JsonObject>(url:string,init?:R
  let res=await fetch(url,{...init,cache:"no-store"});
  if(res.status===401){const refreshed=await fetch("/api/auth/refresh",{method:"POST"});if(refreshed.ok)res=await fetch(url,{...init,cache:"no-store"});}
  const raw=await res.text();
+ // Preserve enough context to diagnose a real Vercel 500 rather than showing a generic banner.
+ const requestId=res.headers.get("x-vercel-id") || "";
+ const context=`[${url}${requestId?` · req ${requestId}`:""}]`;
  let body:JsonObject={};
  if(raw.trim()){
-  try{body=JSON.parse(raw) as Record<string,unknown>;}catch{throw new Error(res.ok?"The server returned an invalid response.":`Request failed (HTTP ${res.status}).`);}
+  try{body=JSON.parse(raw) as Record<string,unknown>;}catch{
+   // Non-JSON response (typically Vercel's Function Invocation Failed HTML).
+   // Surface a snippet so the user's screenshot tells us the real cause.
+   const snippet=raw.replace(/\s+/g," ").trim().slice(0,400);
+   throw new Error(res.ok?`Server returned an invalid response ${context}: ${snippet}`:`HTTP ${res.status} ${context} ${snippet}`);
+  }
  }
- if(!res.ok)throw new Error(typeof body.error === "string" ? body.error : `Request failed (HTTP ${res.status}).`);
+ if(!res.ok){
+  const server=typeof body.error === "string" ? body.error : JSON.stringify(body).slice(0,300);
+  throw new Error(`HTTP ${res.status} ${context} — ${server}`);
+ }
  return body as T;
 }
 const jsonRequest=(method:string,body:unknown):RequestInit=>({method,headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
