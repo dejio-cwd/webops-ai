@@ -9,7 +9,7 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
-  serverExternalPackages: ["@sparticuz/chromium", "playwright-core", "sharp"],
+  serverExternalPackages: ["@sparticuz/chromium", "sharp"],
   outputFileTracingIncludes: { "/*": ["./node_modules/@sparticuz/chromium/bin/**/*"] },
   turbopack: {
     root: __dirname,
