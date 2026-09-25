@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { stripTypeScriptTypes } from "node:module";
 import { test } from "node:test";
 
-const source = readFileSync(new URL("../app/api/fixes/verify/route.ts", import.meta.url), "utf8").replace(/^import .*;\n/gm, "");
+const source = readFileSync(new URL("../app/api/fixes/verify/route.ts", import.meta.url), "utf8").replace(/^import .*;\r?\n/gm, "");
 const prefix = [
   'const guardApiRequest = async () => ({ id: actor });',
   'const isGuardResponse = () => false;',

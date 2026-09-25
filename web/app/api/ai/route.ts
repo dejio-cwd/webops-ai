@@ -1,6 +1,7 @@
+import type { Opportunity } from "@/lib/types";
 import { generateText, AiNotConfiguredError } from "@/lib/ai";
 import { guardApiRequest, isGuardResponse } from "@/lib/security/api-guard";
-import { credentialFromRequest, enforceCredentialPolicy } from "@/lib/security/ai-credential";
+import { type CredentialRequest, credentialFromRequest, enforceCredentialPolicy } from "@/lib/security/ai-credential";
 import { validateAiCredentialEndpoint } from "@/lib/security/outbound";
 
 export const runtime = "nodejs"; export const dynamic = "force-dynamic"; export const maxDuration = 60;
@@ -8,7 +9,7 @@ const SYSTEM = `You are a senior technical SEO and web-performance engineer insi
 
 export async function POST(request: Request) {
   const actor = await guardApiRequest(request, { bucket: "ai-generate", limit: 12, maxBodyBytes: 64_000 }); if (isGuardResponse(actor)) return actor;
-  let body: any; try { body = await request.json(); } catch { return Response.json({ error: "Invalid JSON body." }, { status: 400 }); }
+  let body: CredentialRequest & { mode?: string; context?: unknown; opportunity?: Opportunity }; try { body = await request.json(); } catch { return Response.json({ error: "Invalid JSON body." }, { status: 400 }); }
   const mode = body.mode || "explain"; let user = "";
   if (mode === "summary" && body.context) user = `Write a concise executive audit summary grounded only in this evidence:\n${JSON.stringify(body.context).slice(0, 6_000)}\nCover overall health, three priorities, and likely business impact in about 180 words.`;
   else if (body.opportunity) { const opportunity = body.opportunity; const evidence = `Issue: ${opportunity.title}\nCategory: ${opportunity.category}\nSeverity: ${opportunity.severity}\nAffected pages: ${opportunity.affectedCount}\nWhy: ${opportunity.why}\nRecommendation: ${opportunity.recommendation}\nEvidence: ${(opportunity.sampleEvidence || []).join("\n") || "none"}\nURLs: ${(opportunity.affectedUrls || []).slice(0, 6).join("\n")}`; user = mode === "fix" ? `${evidence}\nProduce a root-cause analysis, exact remediation steps, code/config example, validation procedure, and rollback note.` : `${evidence}\nExplain what this means, why these pages triggered it, its impact, and the highest-leverage next step.`; }

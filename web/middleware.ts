@@ -2,7 +2,8 @@ import { NextResponse, type NextRequest } from "next/server";
 
 export function middleware(request: NextRequest) {
   const path = request.nextUrl.pathname;
-  const authFree = path.startsWith("/sign-in") || path.startsWith("/api/auth") || path.startsWith("/api/health");
+  // Worker routes authenticate their bearer token inside the handler.
+  const authFree = ["/sign-in", "/forgot-password", "/reset-password", "/accept-invitation", "/api/health", "/api/monitoring/run", "/api/jobs/worker"].includes(path) || path.startsWith("/api/auth/");
   if (process.env.SECURITY_ENFORCE_AUTH === "true" && !authFree && !request.cookies.get("webops_access")) {
     if (path.startsWith("/api/")) return NextResponse.json({ error: "Authentication required." }, { status: 401 });
     const signIn = new URL("/sign-in", request.url); signIn.searchParams.set("next", path); return NextResponse.redirect(signIn);

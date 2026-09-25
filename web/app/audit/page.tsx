@@ -13,15 +13,11 @@ import type { PageSpeedResult } from "@/lib/pagespeed";
 import {
   loadSettings,
   saveSettings,
-  upsertConnection,
-  removeConnection as removeConnectionFromSettings,
   connectionForTask,
   toCredential,
-  newId,
   CRAWL_LIMITS,
   PROVIDER_META,
   type AiSettings,
-  type AiConnection,
   type AiTask,
   type ProviderId,
 } from "@/lib/connections";
@@ -119,6 +115,8 @@ export function AuditWorkbench({ embedded = false, initialUrl, initialProjectId,
   }, [projectId]);
 
   useEffect(() => {
+    // Loading persisted history synchronizes this view with the server.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (routeReady) void loadHistory();
   }, [loadHistory, routeReady]);
 
@@ -126,14 +124,35 @@ export function AuditWorkbench({ embedded = false, initialUrl, initialProjectId,
     const params = new URLSearchParams(window.location.search);
     const requestedUrl = initialUrl || params.get("url");
     const requestedModule = params.get("module") as Module | null;
+    // Initialize browser URL state after hydration.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (requestedUrl) setUrl(requestedUrl);
-    setProjectId(params.get("projectId") || initialProjectId || "");
+    setProjectId(initialProjectId || params.get("projectId") || "");
     const requestedEnvironment = initialEnvironment || params.get("environment") || "";
     setEnvironment(["production", "staging", "development"].includes(requestedEnvironment) ? requestedEnvironment : "");
     if (requestedModule && MODULES.includes(requestedModule))
       setActive(requestedModule);
     setRouteReady(true);
-  }, []);
+  }, [initialUrl, initialProjectId, initialEnvironment]);
+
+  useEffect(() => {
+    if (!routeReady) return;
+    let cancelled = false;
+    const refresh = async () => {
+      const response = await fetch(`/api/ai/connections${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ""}`, { cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok || cancelled) return;
+      const credentials = data.credentials as Array<{ id: string; provider: ProviderId; display_name: string; model_allowlist: string[]; created_at: string }>;
+      setSettings(current => {
+        const connections = credentials.map(c => ({ id: c.id, credentialId: c.id, provider: c.provider, label: c.display_name, model: current.connections.find(old => old.id === c.id)?.model || c.model_allowlist[0], createdAt: c.created_at }));
+        return { ...current, connections, defaultConnectionId: connections.some(c => c.id === current.defaultConnectionId) ? current.defaultConnectionId : connections[0]?.id || null };
+      });
+    };
+    void refresh().catch(() => {});
+    const onFocus = () => { void refresh().catch(() => {}); };
+    window.addEventListener("focus", onFocus);
+    return () => { cancelled = true; window.removeEventListener("focus", onFocus); };
+  }, [projectId, routeReady, settingsOpen]);
 
   const persistSettings = useCallback((next: AiSettings) => {
     setSettings(next);
@@ -325,6 +344,7 @@ export function AuditWorkbench({ embedded = false, initialUrl, initialProjectId,
       </aside>)}
 
       <main className="main">
+        {embedded && <nav className="audit-tabs" aria-label="Audit sections">{MODULES.map(m => <button key={m} className={active === m ? "btn sm" : "btn ghost sm"} onClick={() => setActive(m)}>{m}</button>)}</nav>}
         <div className="topbar">
           <div className="crumb">
             {audit ? (
@@ -2436,29 +2456,6 @@ function SettingsModal({
   onChange: (next: AiSettings) => void;
 }) {
   const [tab, setTab] = useState(initialTab);
-  const [editing, setEditing] = useState<AiConnection | null>(null);
-
-  const startNew = () => {
-    setEditing({
-      id: newId(),
-      label: "",
-      provider: "openrouter",
-      apiKey: "",
-      baseUrl: "",
-      model: "",
-      createdAt: new Date().toISOString(),
-    });
-  };
-
-  const saveConn = (c: AiConnection) => {
-    onChange(upsertConnection(settings, c));
-    setEditing(null);
-  };
-
-  const deleteConn = (id: string) => {
-    onChange(removeConnectionFromSettings(settings, id));
-  };
-
   const setDefault = (id: string) => {
     onChange({ ...settings, defaultConnectionId: id });
   };
@@ -2504,128 +2501,22 @@ function SettingsModal({
           </button>
         </div>
         <div className="modal-body">
-          {tab === "connections" &&
-            (editing ? (
-              <ConnectionForm
-                value={editing}
-                onCancel={() => setEditing(null)}
-                onSave={saveConn}
-              />
-            ) : (
-              <>
-                <p
-                  className="muted"
-                  style={{ fontSize: 12.5, marginBottom: 12 }}
-                >
-                  Keys are stored only in this browser (localStorage) and sent
-                  directly with each AI request — never persisted on our
-                  servers, never logged. Add any provider: cloud APIs with your
-                  own key, a custom OpenAI-compatible endpoint, or a local
-                  Ollama / LM Studio server.
-                </p>
-                <button
-                  className="btn sm"
-                  onClick={startNew}
-                  style={{ marginBottom: 14 }}
-                >
-                  + Add connection
-                </button>
-                {settings.connections.length === 0 ? (
-                  <div className="empty">
-                    No connections yet. Server env vars (if set) are used as a
-                    fallback.
-                  </div>
-                ) : (
-                  <div className="conn-list">
-                    {settings.connections.map((c) => (
-                      <div className="conn-card" key={c.id}>
-                        <div className="conn-head">
-                          <div>
-                            <span className="dot unknown" />
-                            <span className="conn-name">
-                              {c.label || "Untitled connection"}
-                            </span>{" "}
-                            <span className="conn-provider">
-                              {PROVIDER_META[c.provider]?.label} ·{" "}
-                              {c.model || "default model"}
-                            </span>
-                            {settings.defaultConnectionId === c.id && (
-                              <span className="chip" style={{ marginLeft: 8 }}>
-                                default
-                              </span>
-                            )}
-                          </div>
-                          <div className="conn-actions">
-                            {settings.defaultConnectionId !== c.id && (
-                              <button
-                                className="btn ghost sm"
-                                onClick={() => setDefault(c.id)}
-                              >
-                                Make default
-                              </button>
-                            )}
-                            <button
-                              className="btn ghost sm"
-                              onClick={() => setEditing(c)}
-                            >
-                              Edit
-                            </button>
-                            <button
-                              className="btn ghost sm"
-                              onClick={() => deleteConn(c.id)}
-                            >
-                              Delete
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {settings.connections.length > 0 && (
-                  <>
-                    <div className="section-title">Task routing</div>
-                    <p
-                      className="muted"
-                      style={{ fontSize: 12, marginBottom: 8 }}
-                    >
-                      Optionally send specific tasks to specific connections.
-                      Falls back to your default.
-                    </p>
-                    <div className="form-grid">
-                      {(["explain", "fix", "summary", "chat"] as AiTask[]).map(
-                        (task) => (
-                          <div className="form-row" key={task}>
-                            <label>{task}</label>
-                            <select
-                              value={settings.routing[task] || ""}
-                              onChange={(e) => setRouting(task, e.target.value)}
-                            >
-                              <option value="">Use default</option>
-                              {settings.connections.map((c) => (
-                                <option key={c.id} value={c.id}>
-                                  {c.label}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                        ),
-                      )}
-                    </div>
-                  </>
-                )}
-              </>
-            ))}
+          {tab === "connections" && <>
+            <p>AI providers are encrypted in your workspace vault. Only provider IDs and model preferences are stored in this browser.</p>
+            <a className="btn sm" href="/ai-studio">Manage saved providers</a>
+            {settings.connections.length === 0 && <p className="muted">No saved providers available. A server-configured provider can still be used as the default.</p>}
+            {settings.connections.map(c => <div className="conn-card" key={c.id}>
+              <strong>{c.label}</strong><span className="chip">{c.provider}</span>
+              <button className="btn ghost sm" onClick={() => setDefault(c.id)}>{settings.defaultConnectionId === c.id ? "Default provider" : "Make default"}</button>
+              <label>Model <input value={c.model || ""} placeholder="Provider default" onChange={e => onChange({ ...settings, connections: settings.connections.map(item => item.id === c.id ? { ...item, model: e.target.value } : item) })} /></label>
+            </div>)}
+            <div className="form-grid">{(["explain", "fix", "summary", "chat"] as AiTask[]).map(task => <label key={task}>{task}<select value={settings.routing[task] || ""} onChange={e => setRouting(task, e.target.value)}><option value="">Default provider</option>{settings.connections.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select></label>)}</div>
+          </>}
 
           {tab === "crawl" && (
             <>
               <p className="muted" style={{ fontSize: 12.5, marginBottom: 12 }}>
-                These are the defaults every audit uses beyond the quick
-                &quot;max pages&quot; control on the toolbar. There is no fixed
-                page cap in this product — raise it as high as your target site
-                (and your patience for a single ~50s serverless run) allows; a
-                crawl always stops cleanly and reports &quot;truncated&quot;
-                instead of failing.
+                Configure page coverage and request concurrency. Audits report when a limit prevents complete coverage.
               </p>
               <div className="form-grid">
                 <div className="form-row">
@@ -2729,153 +2620,6 @@ function SettingsModal({
     </div>
   );
 }
-
-function ConnectionForm({
-  value,
-  onCancel,
-  onSave,
-}: {
-  value: AiConnection;
-  onCancel: () => void;
-  onSave: (c: AiConnection) => void;
-}) {
-  const [c, setC] = useState<AiConnection>(value);
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{
-    ok: boolean;
-    message: string;
-    latencyMs: number;
-  } | null>(null);
-  const meta = PROVIDER_META[c.provider];
-
-  const runTest = async () => {
-    setTesting(true);
-    setTestResult(null);
-    try {
-      const res = await fetch("/api/ai/test", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          provider: c.provider,
-          apiKey: c.apiKey,
-          baseUrl: c.baseUrl,
-          model: c.model,
-        }),
-      });
-      const data = await res.json();
-      setTestResult(data);
-      setC((cur) => ({
-        ...cur,
-        lastTestedAt: new Date().toISOString(),
-        lastTestOk: data.ok,
-        lastTestMessage: data.message,
-      }));
-    } catch (e) {
-      setTestResult({
-        ok: false,
-        message: e instanceof Error ? e.message : "Test failed.",
-        latencyMs: 0,
-      });
-    } finally {
-      setTesting(false);
-    }
-  };
-
-  return (
-    <div>
-      <div className="form-grid">
-        <div className="form-row">
-          <label>Provider</label>
-          <select
-            value={c.provider}
-            onChange={(e) => {
-              const provider = e.target.value as AiConnection["provider"];
-              const m = PROVIDER_META[provider];
-              setC((cur) => ({
-                ...cur,
-                provider,
-                baseUrl: m?.localDefault || cur.baseUrl,
-              }));
-            }}
-          >
-            {Object.entries(PROVIDER_META).map(([id, m]) => (
-              <option key={id} value={id}>
-                {m.label}
-              </option>
-            ))}
-          </select>
-          <span className="hint">{meta?.hint}</span>
-        </div>
-        <div className="form-row">
-          <label>Label</label>
-          <input
-            type="text"
-            placeholder="e.g. My OpenRouter key"
-            value={c.label}
-            onChange={(e) => setC({ ...c, label: e.target.value })}
-          />
-        </div>
-        <div className="form-row">
-          <label>API key {meta?.needsKey ? "" : "(optional)"}</label>
-          <input
-            type="password"
-            placeholder={meta?.needsKey ? "required" : "leave blank if none"}
-            value={c.apiKey || ""}
-            onChange={(e) => setC({ ...c, apiKey: e.target.value })}
-          />
-        </div>
-        <div className="form-row">
-          <label>Base URL override (optional)</label>
-          <input
-            type="text"
-            placeholder={
-              c.provider === "custom"
-                ? "https://your-endpoint/v1"
-                : "leave blank for default"
-            }
-            value={c.baseUrl || ""}
-            onChange={(e) => setC({ ...c, baseUrl: e.target.value })}
-          />
-        </div>
-        <div className="form-row" style={{ gridColumn: "1 / -1" }}>
-          <label>Model (optional — leave blank for provider default)</label>
-          <input
-            type="text"
-            placeholder="e.g. gpt-4o-mini, claude-3-5-haiku-latest, llama3.2"
-            value={c.model || ""}
-            onChange={(e) => setC({ ...c, model: e.target.value })}
-          />
-        </div>
-      </div>
-      {testResult && (
-        <div
-          className={`notice ${testResult.ok ? "ok" : "bad"}`}
-          style={{ marginTop: 12 }}
-        >
-          <span className={`dot ${testResult.ok ? "ok" : "bad"}`} />
-          {testResult.message} ({testResult.latencyMs}ms)
-        </div>
-      )}
-      <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap" }}>
-        <button
-          className="btn sm"
-          onClick={() => onSave(c)}
-          disabled={!c.label.trim()}
-        >
-          Save connection
-        </button>
-        <button className="btn ghost sm" onClick={runTest} disabled={testing}>
-          {testing ? "Testing…" : "Test connection"}
-        </button>
-        <button className="btn ghost sm" onClick={onCancel}>
-          Cancel
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/* ------- Roadmap ------- */
 
 function Roadmap() {
   const done = [

@@ -129,7 +129,7 @@ export async function crawlSite(
   // Deadline + page-cap aware worker pool over a growing frontier.
   let cursor = 0;
   while (cursor < frontier.length && pages.length < maxPages && Date.now() < deadline) {
-    const batch = frontier.slice(cursor, cursor + concurrency);
+    const batch = frontier.slice(cursor, cursor + Math.min(concurrency, maxPages - pages.length));
     cursor += batch.length;
     await Promise.all(batch.map(crawlOne));
     if (robots.crawlDelay && robots.crawlDelay > 0) {

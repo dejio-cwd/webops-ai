@@ -4,7 +4,7 @@ import { stripTypeScriptTypes } from "node:module";
 import { test } from "node:test";
 
 const source = readFileSync(new URL("../app/api/monitoring/run/route.ts", import.meta.url), "utf8")
-  .replace(/^import .*;\n/gm, "");
+  .replace(/^import .*;\r?\n/gm, "");
 const code = 'const runAudit = (...args) => globalThis.__testAudit(...args);\nconst compareAudits = (...args) => globalThis.__testCompare(...args);\n' + stripTypeScriptTypes(source);
 const { GET } = await import(`data:text/javascript;base64,${Buffer.from(code).toString("base64")}`);
 const monitor = { id: "monitor-1", owner_id: "owner-1", project_id: "project-1", cadence: "daily", next_run_at: "2026-09-22T00:00:00.000Z" };

@@ -8,6 +8,8 @@ import styles from "../sign-in/sign-in.module.css";
 export default function ResetPasswordPage() {
   const [accessToken, setAccessToken] = useState(""); const [password, setPassword] = useState(""); const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false); const [message, setMessage] = useState(""); const [error, setError] = useState("");
+  // Read the browser URL after hydration.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { const hash = new URLSearchParams(window.location.hash.slice(1)); setAccessToken(hash.get("access_token") || ""); window.history.replaceState({}, "", "/reset-password"); }, []);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setError("");

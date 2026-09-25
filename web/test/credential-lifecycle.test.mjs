@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { stripTypeScriptTypes } from "node:module";
 import { test } from "node:test";
-const source = readFileSync(new URL("../app/api/provider-credentials/route.ts", import.meta.url), "utf8").replace(/^import .*;\n/gm, "");
+const source = readFileSync(new URL("../app/api/provider-credentials/route.ts", import.meta.url), "utf8").replace(/^import .*;\r?\n/gm, "");
 const prefix = 'const guardApiRequest = async () => ({ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }); const isGuardResponse = () => false; const encryptSecret = s => `encrypted:${s}`; const validateAiCredentialEndpoint = async () => {};\n';
 const { PATCH, DELETE, POST } = await import(`data:text/javascript;base64,${Buffer.from(prefix + stripTypeScriptTypes(source)).toString("base64")}`);
 const org = "11111111-1111-4111-8111-111111111111", id = "22222222-2222-4222-8222-222222222222";

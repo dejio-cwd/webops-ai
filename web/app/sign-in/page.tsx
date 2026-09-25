@@ -9,6 +9,8 @@ export default function SignInPage() {
   const router = useRouter(); const [mode, setMode] = useState<"login" | "signup">("login");
   const [email, setEmail] = useState(""); const [password, setPassword] = useState("");
   const [error, setError] = useState(""); const [busy, setBusy] = useState(false); const [message, setMessage] = useState("");
+  // Read the browser URL after hydration.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { if (new URLSearchParams(window.location.search).get("confirmed") === "1") { setMode("login"); setMessage("Email confirmed. Sign in to continue to your workspace."); window.history.replaceState({}, "", "/sign-in"); } }, []);
   async function submit(event: FormEvent) {
     event.preventDefault(); setBusy(true); setError(""); setMessage("");

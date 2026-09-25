@@ -217,7 +217,7 @@ export async function POST(request: Request) {
       deadlineMs: 50000,
     });
     if (config) {
-      await fetch(`${config.url}/rest/v1/audit_runs`, {
+      const saved = await fetch(`${config.url}/rest/v1/audit_runs`, {
         method: "POST",
         headers: supabaseHeaders(config.key),
         body: JSON.stringify({
@@ -238,7 +238,8 @@ export async function POST(request: Request) {
           completed_at: new Date().toISOString(),
         }),
         cache: "no-store",
-      }).catch(() => null);
+      });
+      if (!saved.ok) return Response.json({ error: "The crawl finished, but saving failed. Please retry; this audit is not in history." }, { status: 502 });
     }
     return Response.json(result, { headers: { "Cache-Control": "no-store" } });
   } catch (err) {

@@ -4,7 +4,7 @@ import { stripTypeScriptTypes } from "node:module";
 import { test } from "node:test";
 
 const load = async (path, prefix = "") => {
-  const source = readFileSync(new URL(path, import.meta.url), "utf8").replace(/^import .*;\n/gm, "");
+  const source = readFileSync(new URL(path, import.meta.url), "utf8").replace(/^import .*;\r?\n/gm, "");
   return import(`data:text/javascript;base64,${Buffer.from(prefix + stripTypeScriptTypes(source)).toString("base64")}`);
 };
 const access = await load("../lib/security/project-access.ts");

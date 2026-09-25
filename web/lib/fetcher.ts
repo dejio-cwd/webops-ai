@@ -41,8 +41,9 @@ async function readCapped(res: Response): Promise<string> {
     const { done, value } = await reader.read();
     if (done) break;
     if (value) {
-      total += value.byteLength;
-      chunks.push(value);
+      const chunk = value.subarray(0, MAX_BYTES - total);
+      total += chunk.byteLength;
+      chunks.push(chunk);
       if (total >= MAX_BYTES) {
         await reader.cancel().catch(() => {});
         break;
@@ -90,10 +91,6 @@ export async function safeFetch(
           "Accept-Language": "en-US,en;q=0.9",
         },
       });
-    } finally {
-      clearTimeout(timer);
-    }
-
     const status = res.status;
     // Handle redirects manually so we can re-validate each hop.
     if (status >= 300 && status < 400 && res.headers.get("location")) {
@@ -122,10 +119,13 @@ export async function safeFetch(
       headers,
       contentType,
       contentLengthBytes:
-        Number(res.headers.get("content-length")) || body.length,
+        Number(res.headers.get("content-length")) || Buffer.byteLength(body),
       responseTimeMs: Date.now() - started,
       body,
     };
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   throw new SsrfError("Too many redirects.");

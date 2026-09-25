@@ -9,6 +9,7 @@ export type AuditComparison = {
   pagesCrawledDelta: number;
   newFindings: Finding[];
   resolvedFindings: Finding[];
+  unverifiedFindings: Finding[];
   persistentFindings: Finding[];
   regressions: Finding[];
 };
@@ -29,13 +30,20 @@ export function compareAudits(
   );
   const newFindings: Finding[] = [];
   const resolvedFindings: Finding[] = [];
+  const unverifiedFindings: Finding[] = [];
+  const covered = new Set((after.pages || []).filter(page => page.ok && !page.error).flatMap(page => [page.url, page.requestedUrl, page.finalUrl]));
   const persistentFindings: Finding[] = [];
   for (const [id, finding] of afterMap) {
     if (beforeMap.has(id)) persistentFindings.push(finding);
     else newFindings.push(finding);
   }
   for (const [id, finding] of beforeMap)
-    if (!afterMap.has(id)) resolvedFindings.push(finding);
+    if (!afterMap.has(id)) {
+      // A missing observation is not evidence of a fix. Site-wide rules also
+      // need a complete follow-up crawl to support a resolution claim.
+      if (covered.has(finding.url) && !after.crawl.truncated) resolvedFindings.push(finding);
+      else unverifiedFindings.push(finding);
+    }
   return {
     beforeAuditId: before.auditId,
     afterAuditId: after.auditId,
@@ -45,6 +53,7 @@ export function compareAudits(
     pagesCrawledDelta: after.crawl.pagesCrawled - before.crawl.pagesCrawled,
     newFindings,
     resolvedFindings,
+    unverifiedFindings,
     persistentFindings,
     regressions: newFindings.filter(
       (finding) =>

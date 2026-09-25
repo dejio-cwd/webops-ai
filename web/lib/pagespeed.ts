@@ -50,7 +50,7 @@ function metric(audit: Record<string, unknown> | undefined): MetricValue {
   return {
     value:
       typeof audit.numericValue === "number"
-        ? Math.round(audit.numericValue)
+        ? audit.numericValue
         : null,
     displayValue: (audit.displayValue as string) ?? null,
     score: typeof audit.score === "number" ? audit.score : null,

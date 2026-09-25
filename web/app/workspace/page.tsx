@@ -154,7 +154,7 @@ export default function WorkspacePage() {
         ? current
         : visibleProjects[0]?.id || "",
     );
-  }, [router]);
+  }, [router, organization?.id]);
 
   const refreshMembers = useCallback(async (organizationId: string) => {
     const response = await apiFetch(
@@ -177,12 +177,16 @@ export default function WorkspacePage() {
   }, []);
 
   useEffect(() => {
+    // Load persisted workspace state.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     refreshWorkspace()
       .catch(() => setError("Unable to load the workspace."))
       .finally(() => setLoading(false));
   }, [refreshWorkspace]);
   useEffect(() => {
     if (organization) {
+    // Load the selected organization’s members.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
       refreshMembers(organization.id).catch(() => null);
       refreshInvitations(organization.id).catch(() => null);
     }
@@ -190,6 +194,8 @@ export default function WorkspacePage() {
 
   useEffect(() => {
     const stored = window.localStorage.getItem("webops-theme");
+    // Initialize a browser-only theme preference.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (stored === "light") setTheme("light");
   }, []);
   useEffect(() => {
@@ -215,6 +221,8 @@ export default function WorkspacePage() {
   useEffect(() => {
     const projectId = activeProject?.id;
     let cancelled = false;
+    // Clear stale monitoring data when the selected project changes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMonitorCadence("weekly");
     setMonitorEnabled(false);
     setMonitorStatus("");
@@ -1080,7 +1088,7 @@ export default function WorkspacePage() {
             </section>
           </>
         ) : active === "Audits" ? (
-          activeProject ? <AuditWorkbench embedded initialUrl={`https://${activeProject.domain}`} initialProjectId={activeProject.id} initialEnvironment={activeProject.environment} /> : <section className={styles.modulePanel}><div><h2>Create a project first</h2><button className={styles.primary} onClick={() => router.push("/onboarding")}>Create project</button></div></section>
+          activeProject ? <AuditWorkbench key={`${activeProject.id}:${activeProject.environment}`} embedded initialUrl={`https://${activeProject.domain}`} initialProjectId={activeProject.id} initialEnvironment={activeProject.environment} /> : <section className={styles.modulePanel}><div><h2>Create a project first</h2><button className={styles.primary} onClick={() => router.push("/onboarding")}>Create project</button></div></section>
         ) : active === "Projects" ? (
           projectsPanel
         ) : active === "Team & Access" ? (

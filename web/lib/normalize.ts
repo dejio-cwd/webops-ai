@@ -44,7 +44,7 @@ export function normalizeUrl(input: string, base?: string): string | null {
     u.port = "";
   }
   const params = new URLSearchParams();
-  const keys = [...u.searchParams.keys()].sort();
+  const keys = [...new Set(u.searchParams.keys())].sort();
   for (const key of keys) {
     if (TRACKING_PARAMS.has(key.toLowerCase())) continue;
     for (const value of u.searchParams.getAll(key)) params.append(key, value);
