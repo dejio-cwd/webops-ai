@@ -12,9 +12,9 @@ test("monitoring worker requires bearer CRON_SECRET", () => {
 });
 
 test("monitoring worker persists scheduled audits and alerts", () => {
-  assert.match(worker, /audit_runs/);
+  assert.match(worker, /launchAudit/);
   assert.match(worker, /monitoring_alerts/);
-  assert.match(worker, /kind: "regression"/);
+  assert.match(worker, /status: "queued"/);
   assert.match(worker, /kind: "failure"/);
 });
 

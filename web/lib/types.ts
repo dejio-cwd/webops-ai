@@ -37,6 +37,8 @@ export const SEVERITY_WEIGHT: Record<Severity, number> = {
 
 /** A single hyperlink discovered on a page. */
 export interface PageLink {
+  selector?: string;
+  imageOnly?: boolean;
   href: string; // normalized absolute URL
   raw: string; // as written in the document
   anchor: string; // visible anchor text (trimmed)
@@ -47,6 +49,20 @@ export interface PageLink {
 
 /** A single image reference discovered on a page. */
 export interface PageImage {
+  source?: string;
+  selector?: string;
+  title?: string | null;
+  context?: string;
+  caption?: string;
+  srcset?: string;
+  sizes?: string;
+  decoding?: string;
+  fetchpriority?: string;
+  renderedWidth?: number;
+  renderedHeight?: number;
+  intrinsicWidth?: number;
+  intrinsicHeight?: number;
+  isLcp?: boolean;
   src: string; // normalized absolute URL
   alt: string | null;
   width: string | null;
@@ -56,6 +72,8 @@ export interface PageImage {
 
 /** Parsed JSON-LD / structured-data block. */
 export interface StructuredDataBlock {
+  data?: unknown;
+  selector?: string;
   types: string[]; // @type values, flattened
   valid: boolean; // JSON parsed cleanly
   raw?: string; // original text (truncated) when invalid
@@ -63,6 +81,16 @@ export interface StructuredDataBlock {
 
 /** All raw evidence captured for one crawled URL. */
 export interface PageEvidence {
+  visibleText?: string;
+  headings?: { level: number; text: string; selector: string }[];
+  resources?: PageResource[];
+  domNodes?: number;
+  pagination?: string[];
+  favicon?: string | null;
+  rendered?: boolean;
+  limitations?: string[];
+  accessibilityIssues?: { id: string; severity: string; description: string; selector: string; evidence: string; recommendation: string }[];
+  measurements?: Record<string, number | null>;
   url: string;
   finalUrl: string;
   requestedUrl: string;
@@ -112,6 +140,12 @@ export interface PageEvidence {
 
 /** One deterministic issue detected against evidence. */
 export interface Finding {
+  id?: string;
+  element?: string;
+  status?: "open" | "ignored" | "resolved" | "accepted";
+  priority?: number;
+  confidence?: "high" | "medium" | "low";
+  estimatedSavingsBytes?: number;
   ruleId: string;
   ruleVersion: string;
   category: FindingCategory;
@@ -122,6 +156,12 @@ export interface Finding {
   recommendation: string;
   url: string; // affected page
   evidence?: string; // the offending value / snippet
+}
+
+export interface PageResource {
+  url: string; type: string; initiator?: string; thirdParty: boolean;
+  transferSize?: number | null; decodedSize?: number | null; startTime?: number;
+  duration?: number; status?: number; blocking?: boolean; rel?: string;
 }
 
 /** A group of related findings rolled up into a prioritized action. */

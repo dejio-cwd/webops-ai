@@ -197,12 +197,14 @@ export function resolveConfig(
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
   content: string;
+  images?: { mimeType: string; data: string }[];
 }
 
 export interface AiRequest {
   system?: string;
   user?: string;
   messages?: ChatMessage[];
+  images?: { mimeType: string; data: string }[];
   credential?: Credential | null;
   provider?: string; // legacy convenience: pick an env-configured provider by name
   model?: string; // overrides credential.model / preset default
@@ -234,7 +236,7 @@ function buildMessages(req: AiRequest): {
   }
   return {
     system: req.system || "",
-    turns: [{ role: "user", content: req.user || "" }],
+    turns: [{ role: "user", content: req.user || "", images: req.images }],
   };
 }
 
@@ -300,7 +302,7 @@ async function callOpenAiCompatible(
 ): Promise<string> {
   const messages = [
     ...(system ? [{ role: "system", content: system }] : []),
-    ...turns,
+    ...turns.map(t => ({ role: t.role, content: t.images?.length ? [{ type: "text", text: t.content }, ...t.images.map(image => ({ type: "image_url", image_url: { url: `data:${image.mimeType};base64,${image.data}` } }))] : t.content })),
   ];
   const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
     method: "POST",
@@ -350,7 +352,7 @@ async function callAnthropic(
       system,
       messages: turns.map((t) => ({
         role: t.role === "assistant" ? "assistant" : "user",
-        content: t.content,
+        content: t.images?.length ? [...t.images.map(image => ({ type: "image", source: { type: "base64", media_type: image.mimeType, data: image.data } })), { type: "text", text: t.content }] : t.content,
       })),
     }),
   });
@@ -379,7 +381,7 @@ async function callGoogle(
       systemInstruction: system ? { parts: [{ text: system }] } : undefined,
       contents: turns.map((t) => ({
         role: t.role === "assistant" ? "model" : "user",
-        parts: [{ text: t.content }],
+        parts: [{ text: t.content }, ...(t.images || []).map(image => ({ inlineData: { mimeType: image.mimeType, data: image.data } }))],
       })),
       generationConfig: { temperature, maxOutputTokens: maxTokens },
     }),

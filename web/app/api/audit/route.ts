@@ -2,19 +2,14 @@
 // Body: { url: string, maxPages?: number, maxDepth?: number,
 // concurrency?: number, checkExternalLinks?: boolean }. Robots compliance is enforced server-side.
 //
-// Runs a bounded, deadline-aware crawl entirely within the serverless function.
+// Queues a durable audit; evidence is persisted incrementally by workers.
 // The route is authenticated because crawling is an expensive outbound operation.
 
-import { runAudit, NoCrawlEvidenceError } from "@/lib/audit";
+import { launchAudit } from "@/lib/pipeline/launch";
 import { compareAudits } from "@/lib/audit-comparison";
 import type { AuditResult } from "@/lib/types";
-import { SsrfError } from "@/lib/ssrf";
 import { guardApiRequest, isGuardResponse } from "@/lib/security/api-guard";
-import {
-  HARD_MAX_PAGES,
-  HARD_MAX_DEPTH,
-  HARD_MAX_CONCURRENCY,
-} from "@/lib/crawler";
+
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -132,6 +127,7 @@ export async function GET(request: Request) {
     );
   const rows = await response.json();
   if (auditId) {
+    if (rows[0] && !rows[0].result && rows[0].engine_version === "2.0.0") return Response.json({ jobId: rows[0].id });
     return rows[0]?.result
       ? Response.json(
           { audit: rows[0].result },
@@ -203,56 +199,10 @@ export async function POST(request: Request) {
       return Response.json({ error: "Audit environment must match the selected project." }, { status: 400 });
     associatedProjectId = project.id;
   }
-  const maxPages = clamp(body.maxPages ?? 20, 1, HARD_MAX_PAGES);
-  const maxDepth = clamp(body.maxDepth ?? 3, 0, HARD_MAX_DEPTH);
-  const concurrency = clamp(body.concurrency ?? 6, 1, HARD_MAX_CONCURRENCY);
-
   try {
-    const result = await runAudit(withScheme, {
-      maxPages,
-      maxDepth,
-      concurrency,
-      respectRobots: true,
-      checkExternalLinks: body.checkExternalLinks ?? true,
-      deadlineMs: 50000,
-    });
-    if (config) {
-      const saved = await fetch(`${config.url}/rest/v1/audit_runs`, {
-        method: "POST",
-        headers: supabaseHeaders(config.key),
-        body: JSON.stringify({
-          owner_id: actor.id,
-          project_id: associatedProjectId,
-          url: withScheme,
-          audit_id: result.auditId,
-          engine_version: result.version,
-          status: result.crawl.truncated ? "truncated" : "completed",
-          summary: {
-            environment,
-            pagesCrawled: result.crawl.pagesCrawled,
-            findings: result.findings.length,
-            opportunities: result.opportunities.length,
-            healthScore: result.health.overall,
-          },
-          result,
-          completed_at: new Date().toISOString(),
-        }),
-        cache: "no-store",
-      });
-      if (!saved.ok) return Response.json({ error: "The crawl finished, but saving failed. Please retry; this audit is not in history." }, { status: 502 });
-    }
-    return Response.json(result, { headers: { "Cache-Control": "no-store" } });
-  } catch (err) {
-    const status = err instanceof SsrfError ? 400 : err instanceof NoCrawlEvidenceError ? 422 : 500;
-    return Response.json(
-      { error: err instanceof Error ? err.message : "Audit failed." },
-      { status, headers: { "Cache-Control": "no-store" } },
-    );
+    const jobId = await launchAudit(actor.id, { url: withScheme, projectId: associatedProjectId || undefined, config: { maxPages: body.maxPages, maxDepth: body.maxDepth, concurrency: body.concurrency, checkExternalLinks: body.checkExternalLinks, respectRobots: true } });
+    return Response.json({ jobId, status: "QUEUED" }, { status: 202 });
+  } catch (error) {
+    return Response.json({ error: error instanceof Error ? error.message : "Unable to save and queue audit." }, { status: 400 });
   }
-}
-
-function clamp(n: number, min: number, max: number): number {
-  n = Number(n);
-  if (Number.isNaN(n)) return min;
-  return Math.max(min, Math.min(max, Math.round(n)));
 }

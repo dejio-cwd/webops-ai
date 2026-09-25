@@ -194,6 +194,7 @@ export function AuditWorkbench({ embedded = false, initialUrl, initialProjectId,
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Audit failed.");
+      if (data.jobId) { window.location.assign(`/audits?jobId=${encodeURIComponent(data.jobId)}`); return; }
       setAudit(data as AuditResult);
       setActive("Overview");
       void loadHistory();
@@ -273,6 +274,7 @@ export function AuditWorkbench({ embedded = false, initialUrl, initialProjectId,
       setError(data?.error || "Unable to load audit.");
       return;
     }
+    if (data.jobId) { window.location.assign(`/audits?jobId=${encodeURIComponent(data.jobId)}`); return; }
     if (data.audit?.crawl?.pagesCrawled === 0) {
       setError("This historical audit crawled no pages and has no valid health score.");
       return;

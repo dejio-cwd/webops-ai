@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import styles from "./workspace.module.css";
-import { AuditWorkbench } from "../audit/page";
+import { AuditConsole } from "@/components/audit-console";
 
 type Organization = { id: string; name: string; slug: string };
 type Membership = { role: string; organizations: Organization | null };
@@ -1080,7 +1080,7 @@ export default function WorkspacePage() {
                         "Team & Access",
                       ].includes(name)
                         ? "Foundation active"
-                        : "Engine scheduled"}
+                        : "Open evidence"}
                     </small>
                   </button>
                 ))}
@@ -1088,7 +1088,7 @@ export default function WorkspacePage() {
             </section>
           </>
         ) : active === "Audits" ? (
-          activeProject ? <AuditWorkbench key={`${activeProject.id}:${activeProject.environment}`} embedded initialUrl={`https://${activeProject.domain}`} initialProjectId={activeProject.id} initialEnvironment={activeProject.environment} /> : <section className={styles.modulePanel}><div><h2>Create a project first</h2><button className={styles.primary} onClick={() => router.push("/onboarding")}>Create project</button></div></section>
+          activeProject ? <AuditConsole key={activeProject.id} embedded initialUrl={`https://${activeProject.domain}`} projectId={activeProject.id} initialView={active} /> : <section className={styles.modulePanel}><div><h2>Create a project first</h2><button className={styles.primary} onClick={() => router.push("/onboarding")}>Create project</button></div></section>
         ) : active === "Projects" ? (
           projectsPanel
         ) : active === "Team & Access" ? (
@@ -1098,31 +1098,7 @@ export default function WorkspacePage() {
         ) : active === "Monitoring" ? (
           monitoringPanel
         ) : (
-          <section className={styles.modulePanel}>
-            <div>
-              <span>{active.toUpperCase()}</span>
-              <h2>{active} evidence workspace</h2>
-              <p>
-                Run a governed baseline audit for the active project to populate
-                this module with real crawl evidence. WebOps AI will not display
-                invented metrics.
-              </p>
-              <div className={styles.inlineForm}>
-                <button
-                  className={styles.primary}
-                  onClick={() => startAudit()}
-                >
-                  {activeProject ? "Open audit workbench" : "Create project"}
-                </button>
-                <button onClick={() => setActive("Projects")}>
-                  Manage project
-                </button>
-                <button onClick={() => setActive("Command Center")}>
-                  Return to Command Center
-                </button>
-              </div>
-            </div>
-          </section>
+          activeProject ? <AuditConsole key={activeProject.id} embedded initialUrl={`https://${activeProject.domain}`} projectId={activeProject.id} initialView={active} /> : <section className={styles.modulePanel}><h2>Create a project to collect evidence</h2><button onClick={()=>router.push("/onboarding")}>Create project</button></section>
         )}
       </main>
       {paletteOpen && (

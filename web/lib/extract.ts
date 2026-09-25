@@ -1,163 +1,19 @@
-// Dependency-free HTML evidence extraction. We deliberately avoid a heavyweight
-// DOM parser: this runs in serverless functions and must stay fast and small.
-// The regexes are tuned for real-world markup and are resilient to attribute
-// ordering and quote style.
+import { createHash } from "node:crypto";
+import { load } from "cheerio";
+import type { Element } from "domhandler";
+import type { PageEvidence, PageImage, PageLink, PageResource, StructuredDataBlock } from "./types";
+import { sameOrigin } from "./normalize";
 
-import crypto from "node:crypto";
-import type {
-  PageEvidence,
-  PageImage,
-  PageLink,
-  StructuredDataBlock,
-} from "./types";
-import { normalizeUrl, sameOrigin } from "./normalize";
-
-const ENTITIES: Record<string, string> = {
-  amp: "&",
-  lt: "<",
-  gt: ">",
-  quot: '"',
-  "#39": "'",
-  apos: "'",
-  nbsp: " ",
-  "#x27": "'",
-  "#x2F": "/",
-};
-
-export function decodeEntities(text: string): string {
-  return text
-    .replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, (m, code) => {
-      if (ENTITIES[code]) return ENTITIES[code];
-      if (code[0] === "#") {
-        const num =
-          code[1] === "x" || code[1] === "X"
-            ? parseInt(code.slice(2), 16)
-            : parseInt(code.slice(1), 10);
-        if (!Number.isNaN(num)) return String.fromCodePoint(num);
-      }
-      return m;
-    })
-    .trim();
+export function decodeEntities(text: string): string { return load(`<span>${text}</span>`)("span").text().trim(); }
+export function assetUrl(raw: string | undefined, base: string): string | null {
+  if (!raw) return null;
+  try { const url = new URL(raw, base); return /^https?:$/.test(url.protocol) && !url.username && !url.password ? url.href : null; } catch { return null; }
 }
-
-function clean(text: string | null | undefined): string | null {
-  if (!text) return null;
-  const out = decodeEntities(text.replace(/<[^>]+>/g, "").replace(/\s+/g, " "));
-  return out || null;
+export function srcsetUrls(value: string): string[] {
+  return value.split(/,\s*(?![^()]*\))/).map(item => item.trim().split(/\s+/)[0]).filter(Boolean);
 }
-
-/** Parse an HTML tag's attributes into a lowercase-keyed map. */
-function attrs(tag: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  const re = /([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*(?:=\s*("([^"]*)"|'([^']*)'|([^\s"'>]+)))?/g;
-  let m: RegExpExecArray | null;
-  // Skip the tag name itself.
-  const body = tag.replace(/^<\s*[a-zA-Z0-9]+/, "");
-  while ((m = re.exec(body))) {
-    const key = m[1].toLowerCase();
-    const val = m[3] ?? m[4] ?? m[5] ?? "";
-    out[key] = decodeEntities(val);
-  }
-  return out;
-}
-
-function firstTag(html: string, tagName: string): Record<string, string> | null {
-  const re = new RegExp(`<${tagName}\\b[^>]*>`, "i");
-  const m = html.match(re);
-  return m ? attrs(m[0]) : null;
-}
-
-function allTags(html: string, tagName: string): Record<string, string>[] {
-  const re = new RegExp(`<${tagName}\\b[^>]*>`, "gi");
-  return [...html.matchAll(re)].map((m) => attrs(m[0]));
-}
-
-function extractMetas(html: string): Record<string, string>[] {
-  return allTags(html, "meta");
-}
-
-function textContent(html: string): string {
-  return html
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
-    .replace(/<noscript\b[^>]*>[\s\S]*?<\/noscript>/gi, " ")
-    .replace(/<!--[\s\S]*?-->/g, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function extractStructuredData(html: string): StructuredDataBlock[] {
-  const blocks: StructuredDataBlock[] = [];
-  const re =
-    /<script\b[^>]*type\s*=\s*["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(html))) {
-    const raw = m[1].trim();
-    try {
-      const parsed = JSON.parse(raw);
-      const types = new Set<string>();
-      const walk = (node: unknown) => {
-        if (Array.isArray(node)) return node.forEach(walk);
-        if (node && typeof node === "object") {
-          const obj = node as Record<string, unknown>;
-          const t = obj["@type"];
-          if (typeof t === "string") types.add(t);
-          else if (Array.isArray(t)) t.forEach((x) => typeof x === "string" && types.add(x));
-          if (Array.isArray(obj["@graph"])) (obj["@graph"] as unknown[]).forEach(walk);
-        }
-      };
-      walk(parsed);
-      blocks.push({ types: [...types], valid: true });
-    } catch {
-      blocks.push({ types: [], valid: false, raw: raw.slice(0, 200) });
-    }
-  }
-  return blocks;
-}
-
-function extractLinks(html: string, baseUrl: string): PageLink[] {
-  const links: PageLink[] = [];
-  const seen = new Set<string>();
-  const re = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(html))) {
-    const a = attrs("<a " + m[1] + ">");
-    const raw = a.href;
-    if (!raw || raw.startsWith("#") || /^(javascript|mailto|tel):/i.test(raw)) continue;
-    const href = normalizeUrl(raw, baseUrl);
-    if (!href) continue;
-    const rel = a.rel ? a.rel.toLowerCase() : null;
-    const key = href + "|" + (rel || "");
-    if (seen.has(key)) continue;
-    seen.add(key);
-    links.push({
-      href,
-      raw,
-      anchor: clean(m[2]) || "",
-      rel,
-      internal: sameOrigin(href, baseUrl),
-      nofollow: rel ? rel.split(/\s+/).includes("nofollow") : false,
-    });
-  }
-  return links;
-}
-
-function extractImages(html: string, baseUrl: string): PageImage[] {
-  const images: PageImage[] = [];
-  for (const img of allTags(html, "img")) {
-    const rawSrc = img.src || img["data-src"] || "";
-    if (!rawSrc) continue;
-    const src = normalizeUrl(rawSrc, baseUrl) || rawSrc;
-    images.push({
-      src,
-      alt: img.alt !== undefined ? decodeEntities(img.alt) : null,
-      width: img.width || null,
-      height: img.height || null,
-      loading: img.loading ? img.loading.toLowerCase() : null,
-    });
-  }
-  return images;
+export function cssUrls(value: string): string[] {
+  return [...value.matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/gi)].map(m => m[1].trim());
 }
 
 export interface ExtractInput {
@@ -176,120 +32,76 @@ export interface ExtractInput {
 }
 
 export function buildEvidence(input: ExtractInput): PageEvidence {
-  const html = input.body;
-  const base = input.finalUrl;
-
-  const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-  const title = clean(titleMatch?.[1]);
-
-  const metas = extractMetas(html);
-  const metaByName = (name: string) =>
-    metas.find((m) => (m.name || "").toLowerCase() === name.toLowerCase());
-  const metaByProp = (prop: string) =>
-    metas.find((m) => (m.property || "").toLowerCase() === prop.toLowerCase());
-
-  const description = clean(metaByName("description")?.content);
-  const robotsMeta = metaByName("robots")?.content?.toLowerCase() || null;
-  const viewport = metaByName("viewport")?.content || null;
-  const charsetMeta =
-    metas.find((m) => m.charset)?.charset ||
-    metaByName("charset")?.content ||
-    (input.headers["content-type"]?.match(/charset=([^;]+)/i)?.[1] ?? null);
-
-  const htmlTag = firstTag(html, "html");
-  const lang = htmlTag?.lang || null;
-
-  const canonicalLink = allTags(html, "link").find(
-    (l) => (l.rel || "").toLowerCase() === "canonical",
-  );
-  const canonical = canonicalLink?.href ? normalizeUrl(canonicalLink.href, base) : null;
-
-  const hreflang = allTags(html, "link")
-    .filter((l) => (l.rel || "").toLowerCase() === "alternate" && l.hreflang)
-    .map((l) => ({ lang: l.hreflang, href: normalizeUrl(l.href || "", base) || l.href || "" }));
-
-  const h1 = [...html.matchAll(/<h1\b[^>]*>([\s\S]*?)<\/h1>/gi)]
-    .map((m) => clean(m[1]))
-    .filter((x): x is string => Boolean(x));
-  const h2Count = (html.match(/<h2\b[^>]*>/gi) || []).length;
-
-  // Heading outline: detect skipped levels (e.g. h2 -> h4).
-  const headingSeq = [...html.matchAll(/<h([1-6])\b[^>]*>/gi)].map((m) => Number(m[1]));
-  const headingOutlineIssues: string[] = [];
-  for (let i = 1; i < headingSeq.length; i++) {
-    if (headingSeq[i] - headingSeq[i - 1] > 1) {
-      headingOutlineIssues.push(`h${headingSeq[i - 1]} → h${headingSeq[i]} skips a level`);
+  const $ = load(input.body); const base = assetUrl($("base[href]").first().attr("href"), input.finalUrl) || input.finalUrl;
+  const selector = (element: Element): string => {
+    const parts: string[] = []; let node: Element | null = element;
+    while (node) {
+      const tag = node.tagName;
+      parts.unshift(`${tag}:nth-of-type(${$(node).prevAll(tag).length + 1})`);
+      node = $(node).parent().get(0) as Element | undefined || null;
     }
-  }
-
-  const openGraph: Record<string, string> = {};
-  const twitter: Record<string, string> = {};
-  for (const m of metas) {
-    const prop = (m.property || "").toLowerCase();
-    const name = (m.name || "").toLowerCase();
-    if (prop.startsWith("og:")) openGraph[prop.slice(3)] = m.content || "";
-    if (name.startsWith("twitter:")) twitter[name.slice(8)] = m.content || "";
-  }
-  void metaByProp;
-
-  const text = textContent(html);
-  const wordCount = text ? text.split(/\s+/).filter(Boolean).length : 0;
-  const textToHtmlRatio = html.length ? Number((text.length / html.length).toFixed(3)) : 0;
-  const contentHash = crypto.createHash("sha1").update(text).digest("hex").slice(0, 16);
-
-  const links = extractLinks(html, base);
-  const images = extractImages(html, base);
-
-  const xRobotsTag = input.headers["x-robots-tag"]?.toLowerCase() || null;
-  const noindex =
-    (robotsMeta?.includes("noindex") ?? false) ||
-    (xRobotsTag?.includes("noindex") ?? false);
-  const indexable = input.ok && input.status < 400 && !noindex;
-  const indexabilityReason = !input.ok
-    ? `HTTP ${input.status}`
-    : noindex
-      ? "noindex directive"
-      : null;
-
-  return {
-    url: input.finalUrl,
-    finalUrl: input.finalUrl,
-    requestedUrl: input.requestedUrl,
-    depth: input.depth,
-    status: input.status,
-    ok: input.ok,
-    redirected: input.redirected,
-    redirectChain: input.redirectChain,
-    contentType: input.contentType,
-    contentLengthBytes: input.contentLengthBytes,
-    responseTimeMs: input.responseTimeMs,
-    headers: input.headers,
-    title,
-    titleLength: title?.length ?? 0,
-    metaDescription: description,
-    metaDescriptionLength: description?.length ?? 0,
-    canonical,
-    robotsMeta,
-    xRobotsTag,
-    metaViewport: viewport,
-    lang,
-    charset: charsetMeta,
-    h1,
-    h2Count,
-    headingOutlineIssues,
-    openGraph,
-    twitter,
-    hreflang,
-    structuredData: extractStructuredData(html),
-    wordCount,
-    textToHtmlRatio,
-    contentHash,
-    links,
-    internalLinkCount: links.filter((l) => l.internal).length,
-    externalLinkCount: links.filter((l) => !l.internal).length,
-    images,
-    indexable,
-    indexabilityReason,
-    findings: [],
+    return parts.join(" > ");
   };
+  const clean = (text: string) => text.replace(/\s+/g, " ").trim();
+  const meta = (name: string) => $("meta").filter((_, el) => ($(el).attr("name") || $(el).attr("property") || "").toLowerCase() === name).first().attr("content") || null;
+  const title = clean($("title").first().text()) || null;
+  const description = meta("description");
+  const headings = $("h1,h2,h3,h4,h5,h6").toArray().map((el) => ({ level: Number(el.tagName.slice(1)), text: clean($(el).text()), selector: selector(el) }));
+  const headingOutlineIssues = headings.flatMap((h, i) => i && h.level > headings[i - 1].level + 1 ? [`h${headings[i-1].level} → h${h.level} skips a level`] : []);
+  const links: PageLink[] = [];
+  $("a[href],area[href]").each((_, el) => {
+    const raw = $(el).attr("href") || ""; const href = assetUrl(raw, base); if (!href || raw.startsWith("#")) return;
+    const rel = $(el).attr("rel")?.toLowerCase() || null;
+    links.push({href, raw, anchor: clean($(el).text()) || $(el).find("img").attr("alt") || "", rel, internal: sameOrigin(href, base), nofollow: !!rel?.split(/\s+/).includes("nofollow"), imageOnly: !clean($(el).text()) && $(el).find("img").length > 0, selector: selector(el)});
+  });
+  const images: PageImage[] = []; const seen = new Set<string>();
+  const addImage = (raw: string | undefined, details: Omit<PageImage, "src">) => {
+    const src = assetUrl(raw, base); if (!src) return;
+    const key = `${src}|${details.selector}|${details.source}`; if (seen.has(key)) return; seen.add(key);
+    images.push({ src, ...details });
+  };
+  $("img").each((_, el) => {
+    const img = $(el), srcset = img.attr("srcset") || img.attr("data-srcset") || "";
+    const details = { alt: img.attr("alt") ?? null, width: img.attr("width") || null, height: img.attr("height") || null, loading: img.attr("loading") || null, title: img.attr("title") || null, decoding: img.attr("decoding"), fetchpriority: img.attr("fetchpriority"), srcset, sizes: img.attr("sizes"), selector: selector(el), context: clean(img.parent().text()).slice(0, 1000), caption: clean(img.closest("figure").find("figcaption").text()) };
+    for (const name of ["src", "data-src", "data-original", "data-lazy-src", "data-url"]) addImage(img.attr(name), { ...details, source: name === "src" ? "img" : "lazy" });
+    for (const candidate of srcsetUrls(srcset)) addImage(candidate, { ...details, source: "srcset" });
+    img.closest("picture").find("source").each((_, source) => { for (const candidate of srcsetUrls($(source).attr("srcset") || $(source).attr("data-srcset") || "")) addImage(candidate, {...details, sizes: $(source).attr("sizes") || details.sizes, source: "picture"}); });
+  });
+  $("[style],style").each((_, el) => { for (const raw of cssUrls($(el).attr("style") || $(el).text())) addImage(raw, {alt:null,width:null,height:null,loading:null,source:"css",selector:selector(el), context:clean($(el).text()).slice(0,500)}); });
+  for (const name of ["og:image", "og:image:url", "twitter:image"]) addImage(meta(name) || undefined, {alt:null,width:null,height:null,loading:null,source:name});
+  $("link[rel='preload'][as='image']").each((_, el) => { addImage($(el).attr("href"), {alt:null,width:null,height:null,loading:null,source:"preload"}); for (const raw of srcsetUrls($(el).attr("imagesrcset") || "")) addImage(raw,{alt:null,width:null,height:null,loading:null,source:"preload-srcset"}); });
+  const structuredData: StructuredDataBlock[] = [];
+  $("script[type='application/ld+json']").each((_, el) => {
+    const raw = $(el).text(); const types = new Set<string>();
+    try {
+      const data: unknown = JSON.parse(raw);
+      const walk = (node: unknown, depth=0) => { if (depth > 30 || !node || typeof node !== "object") return; if (Array.isArray(node)) { node.forEach(v => walk(v,depth+1)); return; } const item=node as Record<string, unknown>; const t=item["@type"]; if(typeof t === "string") types.add(t); else if(Array.isArray(t)) t.forEach(v => typeof v === "string" && types.add(v)); Object.values(item).forEach(v=>walk(v,depth+1)); };
+      walk(data); structuredData.push({types:[...types],valid:true,data,selector:selector(el)});
+    } catch { structuredData.push({types:[],valid:false,raw:raw.slice(0,1000)}); }
+  });
+  const resources: PageResource[] = [];
+  $("script[src],link[href],iframe[src],video[src],audio[src],source[src]").each((_, el) => {
+    const item=$(el), rel=item.attr("rel") || "", as=item.attr("as");
+    if (el.tagName === "link" && !/stylesheet|preload|prefetch|icon|preconnect|dns-prefetch/.test(rel)) return;
+    const url=assetUrl(item.attr("src") || item.attr("href"),base); if (!url) return;
+    resources.push({url,type:el.tagName === "script" ? "script" : /stylesheet/.test(rel) ? "stylesheet" : as || el.tagName,thirdParty:!sameOrigin(url,base),rel,blocking:el.tagName === "script" ? !item.attr("async") && !item.attr("defer") && item.attr("type") !== "module" : rel === "stylesheet"});
+  });
+  const issues: NonNullable<PageEvidence["accessibilityIssues"]> = [];
+  const issue=(id:string, selector:string, description:string, evidence:string, recommendation:string) => issues.push({id,severity:"medium",selector,description,evidence:evidence.slice(0,1000),recommendation});
+  const ids=new Set<string>(); $("[id]").each((_,el)=>{const id=$(el).attr("id")!;if(ids.has(id))issue("duplicate-id",`[id="${id}"]`,"Duplicate element ID",id,"Give each element a unique ID and update references.");ids.add(id);});
+  $("input:not([type='hidden']),select,textarea").each((_,el)=>{const node=$(el), id=node.attr("id"), type=node.attr("type"); const labelled=!!node.attr("aria-label") || !!node.attr("aria-labelledby") || node.parents("label").length>0 || !!(id && $("label").toArray().some(l=>$(l).attr("for")===id)); if(!labelled && !["submit","button","reset","image"].includes(type || ""))issue("form-label",selector(el),"Form control has no associated label",$.html(el),"Associate a visible label using for/id or an accessible name.");});
+  $("button,iframe").each((_,el)=>{const node=$(el), label=el.tagName === "iframe" ? node.attr("title") : clean(node.text()) || node.attr("aria-label") || node.attr("aria-labelledby") || node.find("img").attr("alt");if(!label)issue(`${el.tagName}-name`,selector(el),`${el.tagName} has no accessible name`,$.html(el),el.tagName === "iframe" ? "Add a descriptive iframe title." : "Provide descriptive button text or an accessible name.");});
+  if (!$("main,[role='main']").length) issue("main-landmark","body","No main landmark found","No main element or role=main","Wrap the primary page content in a main landmark.");
+  const domNodes=$("*").length;
+  const openGraph:Record<string,string>={},twitter:Record<string,string>={}; $("meta").each((_,el)=>{const key=$(el).attr("property") || $(el).attr("name") || "";if(key.startsWith("og:"))openGraph[key.slice(3)]=$(el).attr("content") || "";if(key.startsWith("twitter:"))twitter[key.slice(8)]=$(el).attr("content") || "";});
+  const textRoot=$("body").clone(); textRoot.find("script,style,noscript,template,[hidden],[aria-hidden='true']").remove(); const text=clean(textRoot.text());
+  const robotsMeta=meta("robots"), xRobotsTag=input.headers["x-robots-tag"] || null;
+  const noindex=/noindex|none/i.test(`${robotsMeta} ${xRobotsTag}`);
+  const isHtml=/html/i.test(input.contentType);
+  return {url:input.finalUrl,finalUrl:input.finalUrl,requestedUrl:input.requestedUrl,depth:input.depth,status:input.status,ok:input.ok,redirected:input.redirected,redirectChain:input.redirectChain,contentType:input.contentType,contentLengthBytes:input.contentLengthBytes,responseTimeMs:input.responseTimeMs,headers:input.headers,
+    title,titleLength:title?.length || 0,metaDescription:description,metaDescriptionLength:description?.length || 0,canonical:assetUrl($("link[rel='canonical']").first().attr("href"),base),robotsMeta,xRobotsTag,metaViewport:meta("viewport"),lang:$("html").attr("lang") || null,charset:$("meta[charset]").attr("charset") || null,
+    h1:headings.filter(h=>h.level===1).map(h=>h.text),h2Count:headings.filter(h=>h.level===2).length,headings,headingOutlineIssues,openGraph,twitter,hreflang:$("link[hreflang]").toArray().map(el=>({lang:$(el).attr("hreflang")!,href:assetUrl($(el).attr("href"),base) || ""})),structuredData,
+    wordCount:text ? text.split(/\s+/).length : 0,textToHtmlRatio:input.body.length ? text.length/input.body.length : 0,contentHash:createHash("sha256").update(text).digest("hex"),visibleText:text.slice(0,30000),links,internalLinkCount:links.filter(l=>l.internal).length,externalLinkCount:links.filter(l=>!l.internal).length,images,resources,domNodes,accessibilityIssues:issues,
+    pagination:$("link[rel='next'],link[rel='prev'],a[rel='next'],a[rel='prev']").toArray().map(el=>assetUrl($(el).attr("href"),base)).filter((x):x is string=>!!x),favicon:assetUrl($("link[rel~='icon']").first().attr("href"),base),
+    indexable:input.ok && isHtml && !noindex,indexabilityReason:!input.ok ? `HTTP ${input.status}` : !isHtml ? "Not an HTML page" : noindex ? "noindex directive" : null,findings:[],limitations:["HTTP extraction cannot determine computed visibility, contrast, or layout."]};
 }

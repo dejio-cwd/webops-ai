@@ -34,3 +34,8 @@ yarn-debug.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+/.swc
+
+# Generated Workflow endpoints and local development state
+/app/.well-known/workflow/
+/.workflow-data/

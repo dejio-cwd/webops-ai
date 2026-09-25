@@ -10,11 +10,19 @@
     "test": "node --experimental-strip-types --test test/**/*.test.mjs"
   },
   "dependencies": {
+    "@axe-core/playwright": "4.13.0",
+    "@sparticuz/chromium": "153.0.0",
+    "cheerio": "1.2.0",
+    "exceljs": "4.4.0",
     "next": "16.3.5",
+    "playwright-core": "1.63.0",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "sharp": "0.35.4",
+    "workflow": "4.8.9"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.8",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
@@ -22,6 +30,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.3.5",
     "tailwindcss": "^4",
+    "tsx": "4.23.15",
     "typescript": "^5"
   }
 }

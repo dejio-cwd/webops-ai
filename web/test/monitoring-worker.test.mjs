@@ -5,7 +5,7 @@ import { test } from "node:test";
 
 const source = readFileSync(new URL("../app/api/monitoring/run/route.ts", import.meta.url), "utf8")
   .replace(/^import .*;\r?\n/gm, "");
-const code = 'const runAudit = (...args) => globalThis.__testAudit(...args);\nconst compareAudits = (...args) => globalThis.__testCompare(...args);\n' + stripTypeScriptTypes(source);
+const code = 'const launchAudit = (...args) => globalThis.__testAudit(...args);\n' + stripTypeScriptTypes(source);
 const { GET } = await import(`data:text/javascript;base64,${Buffer.from(code).toString("base64")}`);
 const monitor = { id: "monitor-1", owner_id: "owner-1", project_id: "project-1", cadence: "daily", next_run_at: "2026-09-22T00:00:00.000Z" };
 const audit = { auditId: "audit-1", version: "1.1.1", crawl: { truncated: false, pagesCrawled: 1 }, findings: [], opportunities: [], health: { overall: 82 } };
@@ -14,10 +14,12 @@ const json = (data, status = 200) => Response.json(data, { status });
 async function runCase({ verified = true, claim = [{ id: monitor.id }], saveStatus = 201, existingFailure = false } = {}) {
   const calls = [];
   let crawls = 0;
-  globalThis.__testAudit = async (_url, options) => {
+  globalThis.__testAudit = async (_owner, body) => {
+    const options = body.config;
     assert.equal(options.respectRobots, true);
     crawls++;
-    return audit;
+    if(saveStatus !== 201) throw new Error("Persistence failed");
+    return audit.auditId;
   };
   globalThis.__testCompare = () => ({ regressions: [] });
   globalThis.fetch = async (input, init = {}) => {
@@ -48,10 +50,10 @@ test("scheduled audits require verified ownership and obey robots policy", async
   assert.equal(blocked.crawls, 0);
   assert.equal(blocked.calls.some(c => c.method === "PATCH"), false);
   const success = await runCase();
-  assert.equal(success.result.results[0].status, "completed");
+  assert.equal(success.result.results[0].status, "queued");
   assert.equal(success.crawls, 1);
   assert.equal(success.calls.some(c => c.url.includes("enabled=eq.true&next_run_at=eq.") && c.method === "PATCH"), true);
-  assert.equal(success.calls.filter(c => c.method === "POST" && c.url.endsWith("/audit_runs")).length, 1);
+  assert.equal(success.calls.filter(c => c.method === "POST" && c.url.endsWith("/audit_runs")).length, 0);
 });
 
 test("concurrent claim loss does not crawl", async () => {

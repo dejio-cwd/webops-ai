@@ -1,0 +1,8 @@
+{
+  "crons": [
+    { "path": "/api/monitoring/run", "schedule": "0 3 * * *" }
+  ],
+  "functions": {
+    "app/.well-known/workflow/v1/step/route.js": { "maxDuration": 300 }
+  }
+}

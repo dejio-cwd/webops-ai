@@ -1,6 +1,4 @@
-import { runAudit } from "@/lib/audit";
-import { compareAudits } from "@/lib/audit-comparison";
-import type { AuditResult } from "@/lib/types";
+import { launchAudit } from "@/lib/pipeline/launch";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -139,107 +137,11 @@ export async function GET(request: Request) {
       continue;
     }
     try {
-      const previousResponse = await fetch(
-        `${value.url}/rest/v1/audit_runs?select=result&owner_id=eq.${encodeURIComponent(monitor.owner_id)}&project_id=eq.${encodeURIComponent(monitor.project_id)}&order=created_at.desc&limit=1`,
-        { headers: headers(value.key), cache: "no-store" },
-      );
-      if (!previousResponse.ok) throw new Error("Unable to load previous audit.");
-      const previousRows = (await previousResponse.json()) as Array<{
-        result: AuditResult | null;
-      }>;
-      const previous = previousRows[0]?.result;
-      const audit = await runAudit(`https://${project.domain}`, {
-        maxPages: 20,
-        maxDepth: 3,
-        concurrency: 4,
-        respectRobots: true,
-        checkExternalLinks: true,
-        deadlineMs: 50000,
-      });
-      const saveResponse = await fetch(`${value.url}/rest/v1/audit_runs`, {
-        method: "POST",
-        headers: headers(value.key),
-        body: JSON.stringify({
-          owner_id: monitor.owner_id,
-          project_id: monitor.project_id,
-          url: `https://${project.domain}`,
-          audit_id: audit.auditId,
-          engine_version: audit.version,
-          status: audit.crawl.truncated ? "truncated" : "completed",
-          summary: {
-            pagesCrawled: audit.crawl.pagesCrawled,
-            findings: audit.findings.length,
-            opportunities: audit.opportunities.length,
-            healthScore: audit.health.overall,
-            source: "scheduled_monitoring",
-          },
-          result: audit,
-          completed_at: new Date().toISOString(),
-        }),
-        cache: "no-store",
-      });
-      if (!saveResponse.ok) throw new Error("Unable to persist scheduled audit.");
-      if (previous) {
-        const comparison = compareAudits(previous, audit);
-        if (comparison.regressions.length) {
-          const fingerprint = `regression:${monitor.project_id}:${comparison.regressions
-            .map((finding) => finding.ruleId)
-            .sort()
-            .join("|")}`;
-          const existingResponse = await fetch(
-            `${value.url}/rest/v1/monitoring_alerts?select=id&owner_id=eq.${encodeURIComponent(monitor.owner_id)}&project_id=eq.${encodeURIComponent(monitor.project_id)}&alert_fingerprint=eq.${encodeURIComponent(fingerprint)}&status=neq.resolved&limit=1`,
-            { headers: headers(value.key), cache: "no-store" },
-          );
-          if (!existingResponse.ok) throw new Error("Unable to check existing regression alert.");
-          const existing = (await existingResponse.json() as Array<{ id: string }>)[0];
-          const details = {
-            audit_id: audit.auditId,
-            severity: comparison.regressions.some(
-              (finding) => finding.severity === "critical",
-            ) ? "critical" : "high",
-            summary: {
-              regressions: comparison.regressions.length,
-              newFindings: comparison.newFindings.length,
-              healthScoreDelta: comparison.healthScoreDelta,
-            },
-          };
-          const alertResponse = await fetch(
-            existing
-              ? `${value.url}/rest/v1/monitoring_alerts?id=eq.${encodeURIComponent(existing.id)}&owner_id=eq.${encodeURIComponent(monitor.owner_id)}`
-              : `${value.url}/rest/v1/monitoring_alerts`,
-            {
-              method: existing ? "PATCH" : "POST",
-              headers: headers(value.key),
-              body: JSON.stringify(existing ? details : {
-                owner_id: monitor.owner_id,
-                project_id: monitor.project_id,
-                kind: "regression",
-                alert_fingerprint: fingerprint,
-                status: "open",
-                ...details,
-              }),
-              cache: "no-store",
-            },
-          );
-          if (!alertResponse.ok) throw new Error("Unable to persist regression alert.");
-        }
-      }
-      const completeResponse = await fetch(
-        `${value.url}/rest/v1/monitoring_configs?id=eq.${encodeURIComponent(monitor.id)}&next_run_at=eq.${encodeURIComponent(next)}`,
-        {
-          method: "PATCH",
-          headers: headers(value.key, "return=representation"),
-          body: JSON.stringify({ last_run_at: new Date().toISOString() }),
-          cache: "no-store",
-        },
-      );
-      if (!completeResponse.ok || !(await completeResponse.json() as Array<{ id: string }>).length)
-        throw new Error("Unable to mark scheduled audit complete.");
-      results.push({
-        monitorId: monitor.id,
-        status: "completed",
-        auditId: audit.auditId,
-      });
+      const id = await launchAudit(monitor.owner_id, {
+        url: `https://${project.domain}`, projectId: monitor.project_id,
+        config: { maxPages: 20, maxDepth: 3, concurrency: 4, respectRobots: true, checkExternalLinks: true },
+      }, { id: monitor.id, claim: next });
+      results.push({ monitorId: monitor.id, status: "queued", auditId: id });
     } catch {
       const alertRecorded = await recordFailureAlert(value, monitor);
       // Retry failed runs shortly, but only if this invocation still owns the claim.

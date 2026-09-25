@@ -22,14 +22,14 @@ test('associated audit URL and environment must match the selected project',()=>
   assert.match(route,/host !== domain && !host\.endsWith\(`\.\$\{domain\}`\)/);
   assert.match(route,/environment && environment !== project\.environment/);
 });
-test('zero-page crawl is not assigned a fabricated score',()=>{
-  assert.match(engine,/if \(stats\.pagesCrawled === 0\) throw new NoCrawlEvidenceError\(\)/);
-  assert.match(route,/err instanceof NoCrawlEvidenceError \? 422/);
+test('durable audit jobs do not fabricate a synchronous score',()=>{
+  assert.match(route,/launchAudit\(actor\.id/);
+  assert.match(route,/status: "QUEUED"/);
   assert.match(ui,/This historical audit crawled no pages and has no valid health score/);
 });
 
 test('public audit API always enforces robots compliance',()=>{
-  assert.match(route,/respectRobots: true,/);
+  assert.match(route,/respectRobots: true/);
   assert.doesNotMatch(route,/respectRobots: body\.respectRobots/);
   assert.doesNotMatch(route,/respectRobots\?: boolean/);
 });
