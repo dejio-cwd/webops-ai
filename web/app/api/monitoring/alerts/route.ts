@@ -26,27 +26,31 @@ export async function GET(request: Request) {
       { error: "Authentication required." },
       { status: 401 },
     );
-  const value = config();
-  if (!value) return Response.json({ alerts: [] });
-  const projectId = new URL(request.url).searchParams.get("projectId") || "";
-  if (projectId && !(await projectAccess(value, projectId, actor.id)))
-    return Response.json({ error: "Project access denied." }, { status: 403 });
-  const scope = projectId
-    ? `&project_id=eq.${encodeURIComponent(projectId)}`
-    : `&owner_id=eq.${encodeURIComponent(actor.id)}`;
-  const response = await fetch(
-    `${value.url}/rest/v1/monitoring_alerts?select=id,project_id,audit_id,kind,severity,summary,status,created_at,resolved_at${scope}&order=created_at.desc&limit=50`,
-    { headers: headers(value.key), cache: "no-store" },
-  );
-  if (!response.ok)
-    return Response.json(
-      { error: "Unable to load monitoring alerts." },
-      { status: 502 },
+  try {
+    const value = config();
+    if (!value) return Response.json({ alerts: [] });
+    const projectId = new URL(request.url).searchParams.get("projectId") || "";
+    if (projectId && !(await projectAccess(value, projectId, actor.id)))
+      return Response.json({ error: "Project access denied." }, { status: 403 });
+    const scope = projectId
+      ? `&project_id=eq.${encodeURIComponent(projectId)}`
+      : `&owner_id=eq.${encodeURIComponent(actor.id)}`;
+    const response = await fetch(
+      `${value.url}/rest/v1/monitoring_alerts?select=id,project_id,audit_id,kind,severity,summary,status,created_at,resolved_at${scope}&order=created_at.desc&limit=50`,
+      { headers: headers(value.key), cache: "no-store" },
     );
-  return Response.json(
-    { alerts: await response.json() },
-    { headers: { "Cache-Control": "no-store" } },
-  );
+    if (!response.ok)
+      return Response.json(
+        { error: "Unable to load monitoring alerts." },
+        { status: 502 },
+      );
+    return Response.json(
+      { alerts: await response.json() },
+      { headers: { "Cache-Control": "no-store" } },
+    );
+  } catch {
+    return Response.json({ alerts: [] }, { headers: { "Cache-Control": "no-store" } });
+  }
 }
 export async function PATCH(request: Request) {
   const actor = await guardApiRequest(request, {

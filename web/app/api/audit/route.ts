@@ -186,23 +186,25 @@ export async function POST(request: Request) {
   const config = supabaseConfig();
   if (projectId && !config)
     return Response.json({ error: "Project service is not configured." }, { status: 503 });
-  if (projectId && config) {
-    const project = await projectAccess(config, projectId, actor.id);
-    if (!project?.role || !["owner", "admin", "developer"].includes(project.role))
-      return Response.json({ error: "Project audit access denied." }, { status: 403 });
-    let host = "";
-    try { host = new URL(withScheme).hostname.toLowerCase(); } catch { /* rejected below */ }
-    const domain = project.domain.toLowerCase();
-    if (host !== domain && !host.endsWith(`.${domain}`))
-      return Response.json({ error: "Audit URL must match the selected project domain." }, { status: 400 });
-    if (environment && environment !== project.environment)
-      return Response.json({ error: "Audit environment must match the selected project." }, { status: 400 });
-    associatedProjectId = project.id;
-  }
   try {
+    if (projectId && config) {
+      const project = await projectAccess(config, projectId, actor.id);
+      if (!project?.role || !["owner", "admin", "developer"].includes(project.role))
+        return Response.json({ error: "Project audit access denied." }, { status: 403 });
+      let host = "";
+      try { host = new URL(withScheme).hostname.toLowerCase(); } catch { /* rejected below */ }
+      const domain = project.domain.toLowerCase();
+      if (host !== domain && !host.endsWith(`.${domain}`))
+        return Response.json({ error: "Audit URL must match the selected project domain." }, { status: 400 });
+      if (environment && environment !== project.environment)
+        return Response.json({ error: "Audit environment must match the selected project." }, { status: 400 });
+      associatedProjectId = project.id;
+    }
     const jobId = await launchAudit(actor.id, { url: withScheme, projectId: associatedProjectId || undefined, config: { maxPages: body.maxPages, maxDepth: body.maxDepth, concurrency: body.concurrency, checkExternalLinks: body.checkExternalLinks, respectRobots: true } });
     return Response.json({ jobId, status: "QUEUED" }, { status: 202 });
   } catch (error) {
+    // Surface the real cause (e.g. "Database operation failed (404, PGRST202)")
+    // as a 400 instead of leaking a Vercel 500 with no context.
     return Response.json({ error: error instanceof Error ? error.message : "Unable to save and queue audit." }, { status: 400 });
   }
 }

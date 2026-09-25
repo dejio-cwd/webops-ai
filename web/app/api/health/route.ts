@@ -43,6 +43,10 @@ export async function GET() {
     "monitoring_configs",
     "monitoring_alerts",
   ];
+  // Durable pipeline tables from 20260925022622_durable_audit_pipeline.sql.
+  // If any are missing, audit jobs (create/claim/commit) cannot function and the
+  // audit workspace surfaces a setup message instead of a generic error.
+  const pipelineTables = ["audit_jobs", "crawl_tasks", "audit_records"];
   const databaseReadiness =
     supabaseUrl && process.env.SUPABASE_SERVICE_ROLE_KEY
       ? Object.fromEntries(
@@ -58,8 +62,26 @@ export async function GET() {
           ),
         )
       : undefined;
+  const pipelineReadiness =
+    supabaseUrl && process.env.SUPABASE_SERVICE_ROLE_KEY
+      ? Object.fromEntries(
+          await Promise.all(
+            pipelineTables.map(async (table) => [
+              table,
+              await tableReady(
+                supabaseUrl,
+                process.env.SUPABASE_SERVICE_ROLE_KEY!,
+                table,
+              ),
+            ]),
+          ),
+        )
+      : undefined;
   const databaseReady = databaseReadiness
     ? Object.values(databaseReadiness).every(Boolean)
+    : false;
+  const pipelineReady = pipelineReadiness
+    ? Object.values(pipelineReadiness).every(Boolean)
     : false;
   return Response.json(
     {
@@ -83,6 +105,11 @@ export async function GET() {
         configured: Boolean(databaseReadiness),
         requiredTablesReady: databaseReady,
         tables: databaseReadiness,
+      },
+      pipeline: {
+        ready: pipelineReady,
+        tables: pipelineReadiness,
+        migration: "supabase/migrations/20260925022622_durable_audit_pipeline.sql",
       },
       timestamp: new Date().toISOString(),
     },

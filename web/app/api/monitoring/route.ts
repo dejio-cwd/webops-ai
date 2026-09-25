@@ -26,27 +26,33 @@ export async function GET(request: Request) {
       { error: "Authentication required." },
       { status: 401 },
     );
-  const value = config();
-  if (!value) return Response.json({ monitors: [] });
-  const projectId = new URL(request.url).searchParams.get("projectId") || "";
-  if (projectId && !(await projectAccess(value, projectId, actor.id)))
-    return Response.json({ error: "Project access denied." }, { status: 403 });
-  const scope = projectId
-    ? `&project_id=eq.${encodeURIComponent(projectId)}`
-    : `&owner_id=eq.${encodeURIComponent(actor.id)}`;
-  const response = await fetch(
-    `${value.url}/rest/v1/monitoring_configs?select=id,project_id,cadence,enabled,last_run_at,next_run_at,created_at,updated_at${scope}&order=created_at.desc`,
-    { headers: headers(value.key), cache: "no-store" },
-  );
-  if (!response.ok)
-    return Response.json(
-      { error: "Unable to load monitoring configuration." },
-      { status: 502 },
+  try {
+    const value = config();
+    if (!value) return Response.json({ monitors: [] });
+    const projectId = new URL(request.url).searchParams.get("projectId") || "";
+    if (projectId && !(await projectAccess(value, projectId, actor.id)))
+      return Response.json({ error: "Project access denied." }, { status: 403 });
+    const scope = projectId
+      ? `&project_id=eq.${encodeURIComponent(projectId)}`
+      : `&owner_id=eq.${encodeURIComponent(actor.id)}`;
+    const response = await fetch(
+      `${value.url}/rest/v1/monitoring_configs?select=id,project_id,cadence,enabled,last_run_at,next_run_at,created_at,updated_at${scope}&order=created_at.desc`,
+      { headers: headers(value.key), cache: "no-store" },
     );
-  return Response.json(
-    { monitors: await response.json() },
-    { headers: { "Cache-Control": "no-store" } },
-  );
+    if (!response.ok)
+      return Response.json(
+        { error: "Unable to load monitoring configuration." },
+        { status: 502 },
+      );
+    return Response.json(
+      { monitors: await response.json() },
+      { headers: { "Cache-Control": "no-store" } },
+    );
+  } catch {
+    // Never surface an uncaught 500 to the workspace: monitoring is optional and
+    // the UI degrades gracefully when the datastore is unreachable.
+    return Response.json({ monitors: [] }, { headers: { "Cache-Control": "no-store" } });
+  }
 }
 export async function POST(request: Request) {
   const actor = await guardApiRequest(request, {
